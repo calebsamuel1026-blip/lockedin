@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>lockedin</title>
+<meta name="description" content="lockedin is a free focus timer that runs in the background, notices when you pick up your phone, and plans your day.">
+<meta name="theme-color" content="#0a0a0b" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f7f7f2" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="lockedin">
+<meta property="og:title" content="lockedin">
+<meta property="og:description" content="Lock in. A focus timer that catches you on your phone.">
+<meta property="og:image" content="icon-512.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" id="favicon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=Plus+Jakarta+Sans:wght@500..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="wallpaper" id="wallpaper" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="toasts" id="toasts" aria-hidden="true"></div>
+
+<header class="navbar">
+  <a class="brand" href="#focus" aria-label="lockedin home">
+    <img src="icon.svg" alt="" width="30" height="30">
+    <span class="wordmark">locked<span>in</span></span>
+  </a>
+  <nav class="tabs" aria-label="Sections">
+    <a href="#focus" data-view="focus">Focus</a>
+    <a href="#goals" data-view="goals">Goals</a>
+    <a href="#insights" data-view="insights">Insights<span class="badge hidden" id="insightsBadge"><span class="sr-only">New weekly report</span></span></a>
+    <a href="#history" data-view="history">History</a>
+    <a href="#school" data-view="school">School<span class="badge live hidden" id="schoolBadge"><span class="sr-only">classmates locked in now</span></span></a>
+  </nav>
+  <div class="nav-actions">
+    <button class="chip-btn streak-chip" id="streakBtn" title="Your streak: lock in 25 minutes a day to keep it" aria-label="Day streak"><span aria-hidden="true">🔥</span><b id="streakTop">0</b></button>
+    <button class="chip-btn keys-chip" id="keysBtn" title="Your keys. Open the shop" aria-label="Keys and shop"><span aria-hidden="true">🔑</span><b id="keysNum">0</b></button>
+    <button class="round-btn" id="pipBtn" title="Pop out mini timer (P)" aria-label="Pop out mini timer" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><rect x="12" y="11.5" width="6.5" height="5" rx="1.2" class="fill"/></svg>
+    </button>
+    <button class="round-btn" id="helpBtn" title="Help and shortcuts (?)" aria-label="Help and keyboard shortcuts">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.4c-.6.3-1 .8-1 1.5v.5"/><circle cx="12" cy="16.9" r=".7" class="fill"/></svg>
+    </button>
+    <button class="round-btn" id="settingsBtn" title="Settings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2.2"/><circle cx="8" cy="17" r="2.2"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="banner hidden" id="otherTab" role="alert">
+  <span>lockedin is already running in another tab.</span>
+  <button class="pill tinted sm" id="useHereBtn">Use this tab</button>
+</div>
+<div class="banner hidden" id="paperTip" role="status">
+  <span>Writing or reading on paper? Paper mode stops looking down from counting as phone time.</span>
+  <button class="pill filled sm" id="paperOn">Turn on paper mode</button>
+  <button class="link-btn" id="paperNo">No thanks</button>
+</div>
+<div class="banner warn hidden" id="storageWarn" role="alert">
+  <span>Storage is full, so new data can't be saved. Download a backup in History, then delete old sessions.</span>
+</div>
+
+<main id="main" tabindex="-1">
+<!-- ================= FOCUS ================= -->
+<section class="view" id="v-focus" aria-labelledby="focusTitle">
+  <div class="focus-layout">
+    <div class="hero">
+      <h1 class="sr-only" id="focusTitle">Focus</h1>
+      <div class="dial">
+        <svg class="dial-ring" viewBox="0 0 220 220" aria-hidden="true">
+          <defs>
+            <linearGradient id="dialGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="var(--ring-a)"/><stop offset="1" stop-color="var(--ring-b)"/>
+            </linearGradient>
+          </defs>
+          <circle cx="110" cy="110" r="100" class="dial-track"/>
+          <circle cx="110" cy="110" r="100" class="dial-fill" id="blockRing"/>
+        </svg>
+        <div class="dial-center">
+          <div class="state" id="statePill"><span class="dot"></span><span id="stateText">Ready</span></div>
+          <div class="timer" id="timer" role="timer" aria-live="off">0:00:00</div>
+          <div class="timer-sub" id="timerSub">Ready when you are</div>
+          <button class="wrong-btn hidden" id="wrongBtn">Not right? I'm focused</button>
+        </div>
+      </div>
+
+      <div id="preStart" class="hero-controls">
+        <div class="places" role="group" aria-labelledby="placesLbl">
+          <span class="caption" id="placesLbl">Where are you working?</span>
+          <div class="chips" id="placeChips"></div>
+        </div>
+        <button class="chip toggle" id="pomoBtn" aria-pressed="false" title="25 minutes focus, 5 minute break, long break every 4"><span aria-hidden="true">🍅</span> <span class="lbl">Pomodoro</span></button>
+        <button class="chip toggle" id="collabBtn" aria-pressed="false" title="Talking counts as focus when you're working with others"><span aria-hidden="true">👥</span> <span class="lbl">Group work</span></button>
+        <button class="cta" id="startBtn"><span class="cta-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg></span>Lock in</button>
+        <details class="earlier">
+          <summary>Already been working?</summary>
+          <div class="earlier-row">
+            <label for="preMin">Minutes already worked</label>
+            <input type="number" id="preMin" min="0" max="720" step="5" value="0" inputmode="numeric">
+          </div>
+        </details>
+      </div>
+
+      <div id="running" class="hero-controls hidden">
+        <div class="cta-row">
+          <button class="cta" id="pauseBtn"><span class="cta-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="6" y="5" width="4.2" height="14" rx="1.3"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.3"/></svg></span><span class="lbl">Pause</span></button>
+          <button class="ghost-btn" id="breakBtn"><span class="lbl">Break</span></button>
+        </div>
+        <div class="text-actions">
+          <button class="link-btn" id="editBtn" aria-expanded="false" aria-controls="editRow">Edit time</button>
+          <span aria-hidden="true">·</span>
+          <button class="link-btn danger" id="endBtn">End session</button>
+        </div>
+        <button class="chip toggle" id="pomoBtnRun" aria-pressed="false" title="25 minutes focus, 5 minute break, long break every 4"><span aria-hidden="true">🍅</span> <span class="lbl">Pomodoro</span></button>
+        <button class="chip toggle" id="collabBtnRun" aria-pressed="false" title="Talking counts as focus when you're working with others"><span aria-hidden="true">👥</span> <span class="lbl">Group work</span></button>
+        <div id="editRow" class="edit-row hidden">
+          <label for="editH">Total</label>
+          <input type="number" id="editH" min="0" max="23" inputmode="numeric" aria-label="Hours"><span>h</span>
+          <input type="number" id="editM" min="0" max="59" inputmode="numeric" aria-label="Minutes"><span>m</span>
+          <button class="pill filled sm" id="editSave">Save</button>
+          <button class="pill plain sm" id="editCancel">Cancel</button>
+        </div>
+      </div>
+
+      <div class="break-note hidden" id="breakBanner" role="status">Break · <b id="breakLeft"></b> left. Stand up, drink some water, rest your eyes.</div>
+    </div>
+
+    <div class="stack">
+      <article class="card today-card">
+        <header class="card-title"><h2>Today</h2><span class="streak" id="streakBadge" title="Days in a row you hit your daily goal"><span aria-hidden="true">🔥</span> <b id="streakNum">0</b><span class="sr-only"> day streak</span></span></header>
+        <div class="meters" id="ringsSvg" role="group" aria-label="Today's progress">
+          <div class="meter m-hours"><div class="m-top"><span>Hours</span><b id="lgHours">0/3h</b></div><div class="m-track"><i id="rHours"></i></div></div>
+          <div class="meter m-focus"><div class="m-top"><span>Focus</span><b id="lgFocus">--</b></div><div class="m-track"><i id="rFocus"></i></div></div>
+          <div class="meter m-goals goals-only"><div class="m-top"><span>Goals</span><b id="lgGoals">0/0</b></div><div class="m-track"><i id="rGoals"></i></div></div>
+        </div>
+        <div class="week-dots" id="weekDots" aria-label="This week"></div>
+      </article>
+
+      <article class="card hidden" id="goalsCard">
+        <header class="card-title"><h2>Working on</h2><a href="#goals" class="caption-link">See all</a></header>
+        <p id="curGoal" class="cur-goal empty">No goals yet for today.</p>
+        <ul class="mini-goals" id="miniGoals"></ul>
+        <a href="#goals" class="pill tinted sm" id="planCta">Plan today</a>
+      </article>
+
+      <article class="card">
+        <header class="card-title"><h2>This session</h2><span class="caption" id="placeTag"></span></header>
+        <div class="session-stats">
+          <div class="score-ring" id="scoreRing" role="img" aria-label="Focus score not available yet"><span id="scoreTxt">--</span><small>focus</small></div>
+          <dl class="stat-grid">
+            <div><dt>Focused</dt><dd id="stFocused">0m</dd></div>
+            <div><dt>On phone</dt><dd id="stPhone">0m</dd></div>
+            <div><dt>Pickups</dt><dd id="pickups">0</dd></div>
+            <div><dt>Away</dt><dd id="stAway">0m</dd></div>
+            <div><dt>In a row</dt><dd id="streak">0m</dd></div>
+            <div><dt>Chatting</dt><dd id="stChat">0m</dd></div>
+          </dl>
+        </div>
+        <div class="timeline" id="timeline" role="img" aria-label="Session timeline"></div>
+        <div class="legend" aria-hidden="true"><span><i class="c-focused"></i>Focused</span><span><i class="c-phone"></i>Phone</span><span><i class="c-away"></i>Away</span><span><i class="c-break"></i>Break</span><span><i class="c-chat"></i>Chatting</span><span><i class="c-down"></i>Head down</span><span><i class="c-sleepy"></i>Eyes closed</span><span><i class="c-zoned"></i>Zoned out</span></div>
+        <span class="sr-only" id="best"></span>
+        <span class="sr-only" id="stBreak"></span>
+      </article>
+
+      <article class="card">
+        <header class="card-title"><h2>Phone catcher</h2><span class="chips" id="camChips"></span></header>
+        <div class="cam no-preview" id="camWrap">
+          <video id="video" muted playsinline aria-hidden="true"></video>
+          <canvas id="overlay" aria-hidden="true"></canvas>
+          <div class="cam-off" id="camOff">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8a2 2 0 0 1 2-2h2l1.5-2h7L17 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="12.5" r="3.5"/></svg>
+            <p>Turn on the camera and lockedin will notice when you pick up your phone.</p>
+          </div>
+          <div class="cam-orb" aria-hidden="true"><span class="orb"></span><p id="orbText">Watching for your phone</p></div>
+          <div class="cam-msg hidden" id="camMsg" role="status"></div>
+        </div>
+        <div class="cam-actions">
+          <button class="pill filled sm" id="camBtn">Turn on camera</button>
+          <button class="pill plain sm" id="previewBtn" aria-pressed="false">Show preview</button>
+          <button class="chip toggle" id="clipsBtn" aria-pressed="false" title="Save short clips of funny lock-out moments to watch at the end"><span aria-hidden="true">🎬</span> <span class="lbl">Clips</span></button>
+        </div>
+        <p class="footnote"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>Processed on this device. Video is never uploaded or saved.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ================= GOALS ================= -->
+<section class="view" id="v-goals" aria-labelledby="goalsTitle">
+  <div class="page">
+    <header class="large-title">
+      <p class="eyebrow" id="goalsDate"></p>
+      <h1 id="goalsTitle">Today's goals</h1>
+    </header>
+
+    <article class="card ai-card" id="aiCard">
+      <header class="card-title"><h2><span class="sparkle" aria-hidden="true">✦</span> Plan my day</h2></header>
+      <p class="secondary">Tell lockedin what's on your plate. You'll get a goal list that's realistic, but hard to fully finish.</p>
+      <label for="plate" class="sr-only">What do you need to get done?</label>
+      <textarea id="plate" rows="4" maxlength="4000" placeholder="Chem exam Thursday on chapters 4–6. Essay draft due Friday. 20 Spanish flashcards. Reply to the internship email."></textarea>
+      <div class="ai-row">
+        <label for="planHours">Hours today</label>
+        <input type="number" id="planHours" min="0.5" max="16" step="0.5" inputmode="decimal">
+        <button class="pill filled" id="planBtn">Plan my day</button>
+        <span id="planStatus" class="caption" role="status"></span>
+      </div>
+      <div id="planMsg" role="alert"></div>
+    </article>
+
+    <div id="planSummary"></div>
+    <div class="group-head"><h2>Goals</h2><span class="caption" id="goalProg"></span></div>
+    <ul class="group goal-list" id="goalList"></ul>
+    <form class="group add-goal" id="addGoalForm">
+      <span class="plus" aria-hidden="true">+</span>
+      <label for="newGoal" class="sr-only">New goal</label>
+      <input type="text" id="newGoal" placeholder="New goal" maxlength="140" autocomplete="off">
+      <label for="newGoalMin" class="sr-only">Estimated minutes</label>
+      <input type="number" id="newGoalMin" min="5" max="600" step="5" value="30" inputmode="numeric" title="Estimated minutes">
+      <span class="caption">min</span>
+      <button class="pill tinted sm" type="submit">Add</button>
+    </form>
+    <button class="pill plain sm hidden" id="carryBtn"></button>
+  </div>
+</section>
+
+<!-- ================= INSIGHTS ================= -->
+<section class="view" id="v-insights" aria-labelledby="insTitle">
+  <div class="page">
+    <header class="large-title with-control">
+      <div><p class="eyebrow" id="wkTitle"></p><h1 id="insTitle">Weekly report</h1></div>
+      <div class="stepper">
+        <button id="wkPrev" aria-label="Previous week">‹</button>
+        <button id="wkNext" aria-label="Next week">›</button>
+      </div>
+    </header>
+    <div class="kpis" id="wkKpis"></div>
+    <button class="wrapped-cta" id="wrappedBtn"><span aria-hidden="true">▶</span> Your week, wrapped</button>
+    <article class="card" id="coachCard">
+      <header class="card-title"><h2>Coach</h2><button class="pill tinted sm" id="coachBtn"><span aria-hidden="true">✦</span> Get my review</button></header>
+      <p id="coachNote" class="coach" aria-live="polite"></p>
+    </article>
+    <article class="card">
+      <header class="card-title"><h2>Hours by day</h2><span class="caption">Bar color shows focus</span></header>
+      <div class="days" id="wkDays"></div>
+    </article>
+    <div class="two">
+      <article class="card">
+        <header class="card-title"><h2>Best hours</h2></header>
+        <div class="hours" id="wkHours"></div>
+        <p class="secondary small" id="wkHoursTxt"></p>
+      </article>
+      <article class="card">
+        <header class="card-title"><h2>Best places</h2></header>
+        <ul class="plain-list" id="wkPlaces"></ul>
+      </article>
+    </div>
+    <article class="card goals-only">
+      <header class="card-title"><h2>Goals this week</h2></header>
+      <div id="wkGoals"></div>
+    </article>
+  </div>
+</section>
+
+<!-- ================= HISTORY ================= -->
+<section class="view" id="v-history" aria-labelledby="histTitle">
+  <div class="page">
+    <header class="large-title with-control">
+      <h1 id="histTitle">History</h1>
+      <div class="row-actions">
+        <button class="pill tinted sm" id="csvBtn">Export CSV</button>
+        <button class="pill tinted sm" id="backupBtn">Back up</button>
+        <label class="pill tinted sm" for="restoreInput">Restore</label>
+        <input type="file" id="restoreInput" accept="application/json,.json" class="sr-only">
+      </div>
+    </header>
+    <div class="kpis" id="allKpis"></div>
+    <ul class="group sessions" id="historyBody"></ul>
+    <p class="footnote center">Your data lives only in this browser. Back it up now and then, because clearing browser data erases it.</p>
+  </div>
+</section>
+<!-- ================= SCHOOL ================= -->
+<section class="view" id="v-school" aria-labelledby="schoolTitle">
+  <div class="page">
+    <header class="large-title">
+      <p class="eyebrow" id="schoolEyebrow">Students only</p>
+      <h1 id="schoolTitle">Your school</h1>
+    </header>
+
+    <div id="schoolSignedOut">
+      <article class="card signin-card">
+        <div class="signin-hero" aria-hidden="true">🎓</div>
+        <h2 class="signin-title">Lock in with your school</h2>
+        <p class="secondary">Sign in with your school email to see who from your university is locked in right now, climb your school's weekly leaderboard, and keep your history on every device.</p>
+        <form id="signinForm" class="signin" novalidate>
+          <label for="schoolEmail" class="sr-only">School email</label>
+          <input type="email" id="schoolEmail" placeholder="you@university.edu" autocomplete="email" required>
+          <button class="pill filled" type="submit" id="sendCodeBtn">Send sign-in email</button>
+        </form>
+        <form id="codeForm" class="signin hidden" novalidate>
+          <p class="secondary small" id="codeSentTo"></p>
+          <label for="codeInput" class="sr-only">Code from the email</label>
+          <input type="text" id="codeInput" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Code (if your email has one)">
+          <button class="pill filled" type="submit">Sign in</button>
+          <button class="link-btn" type="button" id="codeBack">Use a different email</button>
+        </form>
+        <div id="signinMsg" role="alert"></div>
+        <p class="footnote">Only school emails (.edu, .ac.uk and similar) can join. Classmates see your display name, never your email.</p>
+      </article>
+      <p class="footnote center" id="cloudOffline" hidden>School features couldn't load. Check your connection and refresh.</p>
+    </div>
+
+    <div id="schoolSignedIn" class="hidden">
+      <div class="kpis" id="schoolKpis"></div>
+      <article class="card">
+        <header class="card-title"><h2><span class="pulse" aria-hidden="true"></span>Locked in now</h2><span class="caption" id="liveCount"></span></header>
+        <ul class="live-list" id="liveList"></ul>
+      </article>
+      <article class="card">
+        <header class="card-title"><h2>This week's leaderboard</h2><span class="caption">Hours locked in</span></header>
+        <ol class="board" id="board"></ol>
+      </article>
+      <article class="card">
+        <header class="card-title"><h2>You</h2><span class="caption" id="syncStatus"></span></header>
+        <div class="form-group">
+          <div class="form-row"><label for="pName">Display name</label><input type="text" id="pName" maxlength="30" autocomplete="nickname"></div>
+          <div class="form-row"><label for="pEmoji">Emoji</label><select id="pEmoji"><option>🔒</option><option>🔥</option><option>⚡</option><option>🧠</option><option>📚</option><option>🎧</option><option>☕</option><option>🦉</option><option>🐺</option><option>🐸</option><option>🌙</option><option>🌱</option><option>🎯</option><option>🚀</option><option>💎</option><option>🐱</option></select></div>
+          <div class="form-row"><label for="pLive">Show me on "Locked in now"</label><input type="checkbox" class="switch" id="pLive"></div>
+        </div>
+        <div class="row-actions" style="margin-top:12px">
+          <button class="pill filled sm" id="pSave">Save</button>
+          <button class="pill plain sm" id="signOutBtn">Sign out</button>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+</main>
+
+<div class="sr-only" aria-live="polite" id="politeLive"></div>
+<div class="sr-only" aria-live="assertive" id="assertLive"></div>
+
+<dialog class="alert" id="alert" aria-labelledby="alertTitle" aria-describedby="alertMsg">
+  <div class="alert-card">
+    <div class="alert-glyph" id="alertGlyph" aria-hidden="true">📵</div>
+    <h2 id="alertTitle">Phone down</h2>
+    <p id="alertMsg"></p>
+    <button class="pill filled lg" id="alertOk">I'm back</button>
+    <button class="pill plain" id="alertWrong">Not my phone</button>
+  </div>
+</dialog>
+
+<!-- ================= SHEETS ================= -->
+<dialog id="summaryDlg" class="sheet" aria-labelledby="sumTitle">
+  <h2 id="sumTitle">Session complete</h2>
+  <div id="summaryBody"></div>
+  <div id="sumClips"></div>
+  <div class="sheet-actions"><button class="pill filled" data-close>Done</button></div>
+</dialog>
+
+<dialog id="onboardDlg" class="sheet onboard" aria-labelledby="obTitle">
+  <div class="ob-step" data-step="0">
+    <img class="ob-icon" src="icon.svg" alt="" width="96" height="96">
+    <h2 id="obTitle" tabindex="-1">Welcome to lockedin</h2>
+    <p class="secondary">The focus timer you leave running while you work.</p>
+    <ul class="features">
+      <li><span class="f-ic" style="--c:#ff2d55">◷</span><div><b>Track your time</b><span>Hit Lock in, then work in any other tab or app.</span></div></li>
+      <li><span class="f-ic" style="--c:#30d158">◉</span><div><b>Catch your phone</b><span>The camera notices your phone, dozing off, and zoning out, and nudges you back. No setup needed.</span></div></li>
+      <li><span class="f-ic" style="--c:#5ac8fa">✓</span><div><b>Plan and review</b><span>Set goals for the day and see when you focus best.</span></div></li>
+    </ul>
+    <div class="sheet-actions stacked"><button class="pill filled lg" data-next>Continue</button></div>
+  </div>
+  <div class="ob-step hidden" data-step="1">
+    <div class="ob-icon glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
+    <h2 tabindex="-1">Private by design</h2>
+    <p class="secondary">The phone check runs entirely on your device. No video or photo ever leaves your computer, and nothing is recorded. The camera is optional, and the timer works without it.</p>
+    <p class="secondary small">There's no setup. lockedin learns how you sit during your first few seconds and keeps adjusting as you work.</p>
+    <div class="sheet-actions stacked"><button class="pill filled lg" id="obDone">Get started</button><button class="pill plain" data-back>Back</button></div>
+  </div>
+</dialog>
+
+<dialog id="helpDlg" class="sheet" aria-labelledby="helpTitle">
+  <h2 id="helpTitle">How lockedin works</h2>
+  <div class="help">
+    <h3>Leave it running</h3>
+    <p>Start a session, then work anywhere else on your computer. The tab shows your live time, and you'll get a notification if you pick up your phone or it's time for a break. On Chrome and Edge, the <b>pop-out</b> button opens a small floating timer that stays on top of your other windows.</p>
+    <h3>How the phone check decides</h3>
+    <ul>
+      <li><b>On your phone:</b> it sees a phone, or your head stays tilted down for a few seconds.</li>
+      <li><b>Away:</b> nobody is in front of the camera.</li>
+      <li><b>Writing on paper?</b> Turn on <b>Paper mode</b> in Settings so looking down doesn't count. Only an actual phone will.</li>
+    </ul>
+    <h3>Keyboard shortcuts</h3>
+    <dl class="keys">
+      <div><dt><kbd>Space</kbd></dt><dd>Start or pause</dd></div>
+      <div><dt><kbd>B</kbd></dt><dd>Break</dd></div>
+      <div><dt><kbd>P</kbd></dt><dd>Pop-out timer</dd></div>
+      <div><dt><kbd>C</kbd></dt><dd>Camera on or off</dd></div>
+      <div><dt><kbd>1</kbd>–<kbd>4</kbd></dt><dd>Switch section</dd></div>
+      <div><dt><kbd>?</kbd></dt><dd>Help</dd></div>
+    </dl>
+    <h3>Your data</h3>
+    <p>Everything stays in this browser. There are no accounts. AI planning sends only the text you type, your goal titles and simple stats (hours, focus score) to generate a plan, and nothing is stored.</p>
+  </div>
+  <div class="sheet-actions"><button class="pill plain" id="replayOnboard">Show intro</button><button class="pill filled" data-close>Done</button></div>
+</dialog>
+
+<dialog id="settingsDlg" class="sheet" aria-labelledby="setTitle">
+  <form id="settingsForm" method="dialog">
+    <div class="sheet-bar">
+      <button type="button" class="link-btn" data-close>Cancel</button>
+      <h2 id="setTitle">Settings</h2>
+      <button type="submit" class="link-btn strong" id="saveSettings">Save</button>
+    </div>
+
+    <p class="group-label">Goals</p>
+    <div class="form-group">
+      <div class="form-row"><label for="s_dailyGoalH">Hours per day</label><input type="number" id="s_dailyGoalH" min="0.5" max="16" step="0.5"></div>
+      <div class="form-row"><label for="s_weeklyGoalH">Hours per week</label><input type="number" id="s_weeklyGoalH" min="1" max="100" step="1"></div>
+      <div class="form-row"><label for="s_weekStart">Week starts on</label><select id="s_weekStart"><option value="1">Monday</option><option value="0">Sunday</option><option value="6">Saturday</option></select></div>
+    </div>
+
+    <p class="group-label">Focus blocks</p>
+    <div class="form-group">
+      <div class="form-row"><label for="s_focusBlockMin">Focus minutes before a break</label><input type="number" id="s_focusBlockMin" min="0" max="240"></div>
+      <div class="form-row"><label for="s_breakMin">Break minutes</label><input type="number" id="s_breakMin" min="1" max="60"></div>
+    </div>
+    <p class="group-foot">Set focus minutes to 0 to turn break reminders off.</p>
+
+    <p class="group-label">Phone catcher</p>
+    <div class="form-group">
+      <div class="form-row"><label for="s_autoCamera">Turn on camera when I start</label><input type="checkbox" class="switch" id="s_autoCamera"></div>
+      <div class="form-row"><label for="s_paperMode">Paper mode</label><input type="checkbox" class="switch" id="s_paperMode"></div>
+      <div class="form-row"><label for="s_chatDetect">Notice when I'm chatting</label><input type="checkbox" class="switch" id="s_chatDetect"></div>
+      <div class="form-row"><label for="s_collabDefault">Group work by default</label><input type="checkbox" class="switch" id="s_collabDefault"></div>
+      <div class="form-row"><label for="s_chatSec">Talking counts as chatting after (seconds)</label><input type="number" id="s_chatSec" min="5" max="300"></div>
+      <div class="form-row"><label for="s_sensitivity">Sensitivity</label><select id="s_sensitivity"><option value="0.7">Relaxed</option><option value="1">Normal</option><option value="1.4">Strict</option></select></div>
+      <div class="form-row"><label for="s_phoneAlertSec">Alert after (seconds on phone)</label><input type="number" id="s_phoneAlertSec" min="3" max="300"></div>
+      <div class="form-row"><button type="button" class="link-btn" id="forgetBtn">Re-learn my setup</button></div>
+      <div class="form-row"><label for="s_downSec">Head down counts after (seconds)</label><input type="number" id="s_downSec" min="2" max="60"></div>
+    </div>
+    <p class="group-foot">Paper mode ignores looking down, so only a visible phone counts. Good for writing or reading on your desk. Chatting is noticed from mouth movement only; the microphone is never used. Turn on group work for study groups or team projects so talking counts as focus.</p>
+
+    <p class="group-label">Alerts</p>
+    <div class="form-group">
+      <div class="form-row"><label for="s_sound">Sound</label><input type="checkbox" class="switch" id="s_sound"></div>
+      <div class="form-row"><label for="s_phoneRepeat">Keep beeping while I'm on my phone</label><input type="checkbox" class="switch" id="s_phoneRepeat"></div>
+      <div class="form-row"><label for="s_downSound">Nudge sound when my head is down</label><input type="checkbox" class="switch" id="s_downSound"></div>
+      <div class="form-row"><label for="s_volume">Volume</label><input type="range" id="s_volume" min="0" max="1" step="0.1"></div>
+      <div class="form-row"><label for="s_notify">Notifications</label><input type="checkbox" class="switch" id="s_notify"></div>
+      <div class="form-row"><label for="s_alertSound">Alarm sound</label><select id="s_alertSound">
+        <option value="classic">Classic beep</option><option value="horn">Air horn</option><option value="siren">Siren</option>
+        <option value="bruh">Bruh</option><option value="chime">Gentle chime</option><option value="custom">My own sound</option></select></div>
+      <div class="form-row"><span class="row-actions"><button type="button" class="pill tinted sm" id="testSound">▶ Test</button><button type="button" class="pill tinted sm" id="uploadSound">Upload my sound</button></span><span class="caption" id="soundName"></span></div>
+      <div class="form-row stacked"><label for="s_alertText">Phone alert message</label><input type="text" id="s_alertText" maxlength="40" placeholder="Phone down"></div>
+      <input type="file" id="soundUpload" accept="audio/*" class="sr-only" tabindex="-1" aria-label="Choose an alarm sound">
+      <div class="form-row"><label for="s_titleAlerts">Flash the tab title</label><input type="checkbox" class="switch" id="s_titleAlerts"></div>
+      <div class="form-row"><label for="s_drainKeys">Lose keys when distracted</label><input type="checkbox" class="switch" id="s_drainKeys"></div>
+    </div>
+
+    <p class="group-label">General</p>
+    <div class="form-group">
+      <div class="form-row"><label for="s_theme">Appearance</label><select id="s_theme"><option value="system">Automatic</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
+      <div class="form-row"><label for="s_shortcuts">Keyboard shortcuts</label><input type="checkbox" class="switch" id="s_shortcuts"></div>
+      <div class="form-row stacked"><label for="s_places">Places</label><input type="text" id="s_places" maxlength="200" placeholder="Library, Home, Café"></div>
+    </div>
+    <p class="group-foot">Places are the quick tags you pick before starting, separated by commas.</p>
+
+    <div class="form-group">
+      <button type="button" class="form-row danger-row" id="wipeBtn">Delete all data</button>
+    </div>
+  </form>
+</dialog>
+
+
+<dialog id="shopDlg" class="sheet" aria-labelledby="shopTitle">
+  <div class="sheet-bar"><span></span><h2 id="shopTitle">Shop</h2><button type="button" class="link-btn strong" data-close>Done</button></div>
+  <div class="balance"><span aria-hidden="true">🔑</span><b id="shopKeys">0</b><span class="caption">keys</span></div>
+  <p class="caption center-text">Earn 1 key per focused minute, +5 for every 25 phone-free minutes, +20 for your daily goal. Streaks multiply it.</p>
+  <p class="group-label">Backgrounds</p>
+  <div class="shop-grid" id="shopWalls"></div>
+  <input type="file" id="wallUpload" accept="image/*" class="sr-only" tabindex="-1" aria-label="Choose a background photo">
+  <p class="caption center-text">Your photo stays on this device. It's never uploaded.</p>
+  <p class="group-label">Streak protection</p>
+  <div class="form-group"><div class="form-row"><span><b>Streak freeze</b><br><span class="caption">Saves your streak if you miss a day. <span id="freezeCount"></span></span></span><button class="pill tinted sm" id="buyFreeze"></button></div></div>
+  <p class="group-label">Earned recently</p>
+  <ul class="plain-list ledger" id="ledger"></ul>
+</dialog>
+
+<dialog id="breakDlg" class="sheet" aria-labelledby="breakTitle">
+  <h2 id="breakTitle">Take a break</h2>
+  <p class="secondary">Finish a focus block and your break is free. Want one now? Spend some keys.</p>
+  <div class="break-opts" id="breakOpts"></div>
+  <p class="caption" id="breakMsg" role="alert"></p>
+  <div class="sheet-actions"><button class="pill plain" data-close>Keep working</button></div>
+</dialog>
+
+<dialog id="wrappedDlg" class="wrapped" aria-label="Your week, wrapped">
+  <div class="story-bars" id="storyBars"></div>
+  <button class="story-close" data-close aria-label="Close">✕</button>
+  <div class="story" id="story"></div>
+  <button class="story-nav prev" id="storyPrev" aria-label="Previous"></button>
+  <button class="story-nav next" id="storyNext" aria-label="Next"></button>
+</dialog>
+
+<template id="pipTpl">
+  <div class="pip">
+    <div class="state" data-pip="pill"><span class="dot"></span><span data-pip="state">Ready</span></div>
+    <div class="pip-timer" data-pip="timer">0:00:00</div>
+    <div class="pip-goal" data-pip="goal"></div>
+    <div class="pip-actions">
+      <button class="pill tinted sm" data-pip="break">Break</button>
+      <button class="pill filled sm" data-pip="pause">Pause</button>
+    </div>
+  </div>
+</template>
+
+<noscript><p style="padding:20px">lockedin needs JavaScript turned on.</p></noscript>
+<script type="module" src="app.js"></script>
+</body>
+</html>
