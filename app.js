@@ -1295,7 +1295,21 @@ function openAccount(prompted = false) {
   $("#acctLater").classList.toggle("hidden", !prompted);
   if (prompted) setAuthMode("up");
   $("#accountDlg").showModal();
-  startCloud();
+  startCloud().then(renderMyClips);
+}
+// Clips this account has shared by link, with views, so they can be copied again or deleted.
+async function renderMyClips() {
+  const list = await cloud?.myClips?.().catch(() => []) || [];
+  $("#myClips").classList.toggle("hidden", !list.length);
+  $("#myClipList").innerHTML = list.map(c => `<div class="form-row"><span class="clip-row"><a href="${esc(cloud.clipLink(c.id))}" target="_blank" rel="noopener">${esc(c.caption || "Clip")}</a><span class="caption">${new Date(c.created_at).toLocaleDateString(undefined, {month: "short", day: "numeric"})} · ${c.views} view${c.views === 1 ? "" : "s"}</span></span>
+    <span><button type="button" class="pill plain sm" data-copy-clip="${esc(c.id)}">Copy</button><button type="button" class="pill plain sm danger-text" data-del-clip="${esc(c.id)}">Delete</button></span></div>`).join("");
+  $("#myClipList").onclick = async e => {
+    const copy = e.target.closest("[data-copy-clip]")?.dataset.copyClip, del = e.target.closest("[data-del-clip]")?.dataset.delClip;
+    if (copy) { try { await navigator.clipboard.writeText(cloud.clipLink(copy)); e.target.textContent = "Copied ✓"; } catch { prompt("Copy this link:", cloud.clipLink(copy)); } }
+    if (del && confirm("Delete this clip? The link will stop working.")) {
+      try { await cloud.deleteClip(list.find(c => c.id === del)); track("clip_link_deleted"); renderMyClips(); } catch (err) { note("#acctMsg", err.message); }
+    }
+  };
 }
 // Signed-out visitors are asked to make an account each time they open the site. "Not now" lasts for this visit.
 const LATER_KEY = "lockedin.acctLater";
@@ -1419,11 +1433,40 @@ function renderClips() {
   if (!list.length) { box.innerHTML = ""; return; }
   box.innerHTML = `<p class="group-label">🎬 Your lock-out moments</p><div class="clip-grid">${list.map((c, i) => `
     <figure class="clip"><canvas data-clip="${i}"></canvas><figcaption>${esc(c.caption)} · ${fmtHM(c.sessionSec)} in</figcaption>
-    <button class="pill filled sm" data-share-clip="${i}">Share</button></figure>`).join("")}</div>`;
+    <div class="clip-actions"><button class="pill filled sm" data-link-clip="${i}">🔗 Share link</button><button class="pill plain sm" data-share-clip="${i}">Save</button></div></figure>`).join("")}</div>`;
   const stops = [...box.querySelectorAll("canvas[data-clip]")].map(cv => clipper.play(list[+cv.dataset.clip], cv));
   $("#summaryDlg").addEventListener("close", () => { stops.forEach(s => s()); clipper.reset(); box.innerHTML = ""; }, {once: true});
 }
+// Share link: uploads this one clip (only when tapped, only for signed-in accounts) and shares a lockedin page that plays it.
+async function shareClipLink(clip, btn) {
+  if (clip.link) return sendLink(clip.link, btn);
+  let c;
+  try { c = await ensureCloud(); } catch (err) { toast(err.message, "warn"); return; }
+  if (!c.user) { toast("Make a free account to share clip links 🔗", "warn"); openAccount(true); return; }
+  if (!store.load("clipLinkOk", false)) {
+    if (!confirm("Share this clip as a link?\n\nThe clip (about 6 seconds, no sound) is uploaded so anyone with the link can watch it. Make sure everyone in it is OK with that.\n\nYou can delete shared clips any time in Account.")) return;
+    store.save("clipLinkOk", true);
+  }
+  btn.disabled = true; btn.textContent = "Uploading…";
+  try {
+    clip.link = await c.shareClip(await clipper.toVideo(clip), clip.caption, clip.kind);
+    track("clip_link_created", {kind: clip.kind});
+    await sendLink(clip.link, btn);
+  } catch (err) { btn.textContent = "Couldn't share"; toast(err.message || "Couldn't upload the clip.", "warn"); console.warn(err); }
+  finally { btn.disabled = false; }
+}
+async function sendLink(link, btn) {
+  if (navigator.share) {
+    try { await navigator.share({title: "Caught locking out 😭", text: "Caught locking out on lockedin 😭", url: link}); btn.textContent = "Shared ✓"; track("clip_shared", {via: "link"}); return; }
+    catch (err) { if (err?.name === "AbortError") { btn.textContent = "🔗 Share link"; return; } }
+  }
+  try { await navigator.clipboard.writeText(link); btn.textContent = "Link copied ✓"; toast("Link copied. Paste it anywhere 🔗"); }
+  catch { prompt("Copy this link:", link); btn.textContent = "🔗 Copy link"; }
+  track("clip_shared", {via: "copy"});
+}
 $("#sumClips").onclick = async e => {
+  const li = e.target.closest("[data-link-clip]")?.dataset.linkClip;
+  if (li != null) return shareClipLink(clipper.clips[+li], e.target.closest("button"));
   const i = e.target.closest("[data-share-clip]")?.dataset.shareClip; if (i == null) return;
   const btn = e.target; btn.disabled = true; btn.textContent = "Making video…";
   try {

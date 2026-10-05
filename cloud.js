@@ -207,6 +207,9 @@ export async function signOut() {
 }
 // Deletes every row about you in the database and your login, then this device's copy.
 export async function deleteAccount() {
+  // Shared clip videos sit in storage, which the database function can't empty, so remove them first.
+  const mine = await myClips().catch(() => []);
+  if (mine.length) await sb.storage.from("clips").remove(mine.map(c => c.path)).catch(() => {});
   const {error} = await sb.rpc("delete_my_account");
   if (error) throw friendly(error);
   await sb.auth.signOut({scope: "local"}).catch(() => {});
@@ -214,6 +217,30 @@ export async function deleteAccount() {
   try { store.clearAll(); } finally { applying = false; }
   writeJSON(META_KEY, null); writeJSON(UPLOADS_KEY, null);
   try { indexedDB.deleteDatabase("lockedin"); } catch {}
+}
+
+// ---------- clip links: the only time a camera clip leaves the device, and only when its owner taps Share ----------
+const clipId = () => Array.from(crypto.getRandomValues(new Uint8Array(10)), b => "abcdefghijkmnpqrstuvwxyz23456789"[b % 32]).join("");
+export const clipLink = id => new URL(`c.html?id=${id}`, location.href.split(/[?#]/)[0].replace(/[^/]*$/, "")).href;
+export async function shareClip(file, caption, kind) {
+  if (!user) throw new Error("Sign in to share a link.");
+  const id = clipId(), ext = file.type.includes("mp4") ? "mp4" : "webm", path = `${user.id}/${id}.${ext}`;
+  const up = await sb.storage.from("clips").upload(path, file, {contentType: file.type, cacheControl: "31536000", upsert: false});
+  if (up.error) throw friendly(up.error);
+  const {error} = await sb.from("shared_clips").insert({id, path, caption: String(caption || "").slice(0, 80), kind});
+  if (error) { sb.storage.from("clips").remove([path]).catch(() => {}); throw friendly(error); }
+  return clipLink(id);
+}
+export async function myClips() {
+  if (!user) return [];
+  const {data, error} = await sb.from("shared_clips").select("id, path, caption, created_at, views").order("created_at", {ascending: false}).limit(100);
+  if (error) throw friendly(error);
+  return data || [];
+}
+export async function deleteClip(c) {
+  await sb.storage.from("clips").remove([c.path]);
+  const {error} = await sb.from("shared_clips").delete().eq("id", c.id);
+  if (error) throw friendly(error);
 }
 
 export async function updateProfile(patch) {

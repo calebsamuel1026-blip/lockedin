@@ -699,3 +699,9 @@ input[type=email], input[type=password] {
 .consent b { color: var(--text); }
 .consent-actions { display: flex; gap: 6px; margin-left: auto; }
 @media (max-width: 400px) { .wordmark { display: none; } .nav-actions { gap: 4px; } }
+
+/* clip links */
+.clip-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.clip-row { display: grid; gap: 2px; min-width: 0; }
+.clip-row a { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.danger-text { color: var(--red, #ff5a5f); }
