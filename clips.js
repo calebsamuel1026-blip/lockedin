@@ -1,5 +1,6 @@
 // "Lock-out moments": short clips of you getting distracted, shown when the session ends.
 // Opt-in. Frames live only in memory and vanish when the tab closes unless you share or save a clip.
+import {lead, image} from "./icons.js";
 const FPS = 5, BEFORE = 3, AFTER = 3, MAX_CLIPS = 6, W = 360;
 const CAPTIONS = {
   phone: ["📵 caught lacking", "📵 the phone won this round", "📵 just one quick scroll…"],
@@ -44,6 +45,10 @@ export function moment(kind, sessionSec) {
   if (clips.length >= MAX_CLIPS && score <= Math.min(...clips.map(c => c.score))) return; // not funnier than what we have
   if (clips.filter(c => c.kind === kind).length >= 2 && kind !== "laugh") return;          // variety
   pending = {kind, score, at: Date.now(), sessionSec, caption: pick(CAPTIONS[kind] || ["🔒 lockedout"]), frames: ring.map(b => b)};
+  // Captions start with an icon marker: keep the words for drawing, and load the icon image to draw beside them.
+  const p = pending, {icon, text} = lead(p.caption);
+  p.text = text;
+  if (icon) image(icon).then(img => { p.iconImg = img; });
   ring = [];
 }
 function finish() {
@@ -62,7 +67,10 @@ function drawFrame(g, clip, i, cw, ch) {
   g.drawImage(f, 0, 0, cw, ch);
   g.fillStyle = "rgba(0,0,0,.45)"; g.fillRect(0, ch - 56, cw, 56);
   g.fillStyle = "#fff"; g.font = "800 22px 'Plus Jakarta Sans', system-ui, sans-serif"; g.textAlign = "center";
-  g.fillText(clip.caption, cw / 2, ch - 20);
+  const text = clip.text ?? clip.caption, icon = clip.iconImg, size = 24, gap = 8;
+  const tw = g.measureText(text).width, total = tw + (icon ? size + gap : 0), x0 = (cw - total) / 2;
+  if (icon) g.drawImage(icon, x0, ch - 20 - size + 4, size, size);
+  g.textAlign = "left"; g.fillText(text, x0 + (icon ? size + gap : 0), ch - 20);
   g.textAlign = "left"; g.font = "800 16px 'Plus Jakarta Sans', system-ui, sans-serif"; g.fillStyle = "#c6ff3d";
   g.fillText("lockedin", 12, 26);
 }

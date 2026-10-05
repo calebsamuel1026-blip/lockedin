@@ -5,6 +5,7 @@ import * as rewards from "./rewards.js";
 import {getFile, putFile, shrinkImage} from "./files.js";
 import * as clipper from "./clips.js";
 import * as emoji from "./emoji.js";
+import {strip as noEmoji} from "./icons.js";
 import * as analytics from "./analytics.js";
 import {GOOGLE_AUTH_ENABLED, GSC_VERIFICATION} from "./config.js";
 const {DISTRACTED} = engine;
@@ -407,7 +408,7 @@ function notify(title, body, kind = "soft", speak = true) {
   if (speak) announce(`${title}. ${body}`, kind === "alarm");
   if (settings.notify && "Notification" in window && Notification.permission === "granted" && (document.hidden || !document.hasFocus())) {
     try {
-      const n = new Notification(title, {body, tag: "lockin", renotify: true, icon: "icon-192.png"});
+      const n = new Notification(noEmoji(title), {body: noEmoji(body), tag: "lockin", renotify: true, icon: "icon-192.png"});
       n.onclick = () => { window.focus(); n.close(); };
     } catch {}
   }
@@ -511,7 +512,7 @@ let lastIconState = "";
 function updateChrome(st) {
   if (active) {
     const flash = settings.titleAlerts && Date.now() < titleFlashUntil && Math.floor(Date.now() / 1000) % 2 === 0;
-    document.title = flash ? "📵 Phone down!" : `${fmtClock(elapsedMs())} · ${LABEL[st] || "Focused"} — lockedin`;
+    document.title = flash ? "Phone down!" : `${fmtClock(elapsedMs())} · ${LABEL[st] || "Focused"} — lockedin`;
   } else document.title = "lockedin";
   if (st === lastIconState) return;
   lastIconState = st;
@@ -1502,7 +1503,7 @@ async function shareClipLink(clip, btn) {
 }
 async function sendLink(link, btn) {
   if (navigator.share) {
-    try { await navigator.share({title: "Caught locking out 😭", text: `I got caught locking out on lockedin 😭 Lock in with me, we both get ${INVITE_KEYS} keys:`, url: link}); btn.textContent = "Shared ✓"; track("clip_shared", {via: "link"}); return; }
+    try { await navigator.share({title: "Caught locking out", text: `I got caught locking out on lockedin. Lock in with me, we both get ${INVITE_KEYS} keys:`, url: link}); btn.textContent = "Shared ✓"; track("clip_shared", {via: "link"}); return; }
     catch (err) { if (err?.name === "AbortError") { btn.textContent = "🔗 Share link"; return; } }
   }
   try { await navigator.clipboard.writeText(link); btn.textContent = "Link copied ✓"; toast("Link copied. Paste it anywhere 🔗"); }

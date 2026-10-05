@@ -1,7 +1,7 @@
 // Offline support: app shell is network-first (so updates show up), vision models are cache-first (they're big and never change).
-const SHELL = "lockedin-shell-v30";
+const SHELL = "lockedin-shell-v31";
 const MODELS = "lockedin-models-v1";
-const SHELL_FILES = ["./", "index.html", "styles.css", "app.js", "store.js", "vision.js", "engine.js", "cloud.js", "rewards.js", "files.js", "clips.js", "emoji.js",
+const SHELL_FILES = ["./", "index.html", "styles.css", "app.js", "store.js", "vision.js", "engine.js", "cloud.js", "rewards.js", "files.js", "clips.js", "emoji.js", "icons.js",
   "config.js", "analytics.js", "merge.js", "privacy.html", "terms.html", "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-192.png"];
 // Accounts, sync and analytics must always hit the network, never a cached copy.
 const NEVER_CACHE = /(^|\.)(supabase\.co|google-analytics\.com|googletagmanager\.com|analytics\.google\.com|doubleclick\.net)$/;

@@ -6,7 +6,7 @@
 <title>You're invited to lock in · lockedin</title>
 <meta name="description" content="A friend got caught locking out on lockedin and invited you. Join free and you both get 50 keys.">
 <meta name="robots" content="noindex">
-<meta property="og:title" content="Caught locking out 😭 Lock in with me?">
+<meta property="og:title" content="Caught locking out. Lock in with me?">
 <meta property="og:description" content="Watch the clip, then join lockedin free. We both get 50 keys.">
 <meta property="og:image" content="https://calebsamuel1026-blip.github.io/lockedin/icon-512.png">
 <meta name="twitter:card" content="summary">
@@ -51,6 +51,8 @@
 </main>
 <script type="module">
 import {SUPABASE_URL, SUPABASE_KEY} from "./config.js";
+import {start as icons} from "./emoji.js";
+icons();
 const id = new URLSearchParams(location.search).get("id") || "";
 const $ = s => document.querySelector(s);
 const fail = () => { $("#title").textContent = "This clip isn't available anymore"; };

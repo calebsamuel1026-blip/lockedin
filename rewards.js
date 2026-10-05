@@ -1,4 +1,5 @@
 // Keys (currency), shop, streaks and "Your week, wrapped". Pure logic plus a share-image renderer.
+import {image, lead} from "./icons.js";
 import * as store from "./store.js";
 
 export const STREAK_MIN = 25 * 60;     // seconds locked in per day to keep your streak alive
@@ -138,7 +139,10 @@ export async function shareImage(w) {
   ];
   let y = 520;
   for (const [big, small] of rows) {
-    g.fillStyle = "#fff"; g.font = font(800, 150); g.fillText(big, 90, y);
+    g.fillStyle = "#fff"; g.font = font(800, 150);
+    const {icon, text} = lead(big), img = icon && await image(icon);
+    if (img) { g.drawImage(img, 90, y - 120, 130, 130); g.fillText(text, 90 + 150, y); }
+    else g.fillText(text, 90, y);
     g.fillStyle = "rgba(255,255,255,.7)"; g.font = font(600, 50); g.fillText(small, 90, y + 70);
     y += 270;
   }
