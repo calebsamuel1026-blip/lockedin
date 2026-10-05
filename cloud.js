@@ -231,6 +231,17 @@ export async function shareClip(file, caption, kind) {
   if (error) { sb.storage.from("clips").remove([path]).catch(() => {}); throw friendly(error); }
   return clipLink(id);
 }
+// Invites: a new account from a clip link claims it once; the sharer collects one reward per friend who joined.
+export async function claimInvite(code) {
+  const {data, error} = await sb.rpc("claim_invite", {code});
+  if (error) throw friendly(error);
+  return data === true;
+}
+export async function claimReferralRewards() {
+  const {data, error} = await sb.rpc("claim_referral_rewards");
+  if (error) throw friendly(error);
+  return data || 0;
+}
 export async function myClips() {
   if (!user) return [];
   const {data, error} = await sb.from("shared_clips").select("id, path, caption, created_at, views").order("created_at", {ascending: false}).limit(100);

@@ -1244,6 +1244,7 @@ function startCloud() {
         if (id && id !== lastUser && via === "google") track(Date.now() - Date.parse(u.created_at) < 120000 ? "signup" : "login", {method: "google"});
         lastUser = id;
         renderAccount();
+        if (id) settleInvites(id);
         // Signed up from the welcome prompt: get out of the way so they can lock in.
         if (id && $("#accountDlg").open && !$("#acctLater").classList.contains("hidden")) { $("#accountDlg").close(); toast("You're in! Your progress now saves to your account ✨"); }
       },
@@ -1311,6 +1312,50 @@ async function renderMyClips() {
     }
   };
 }
+// Invites: clip links send friends here with ?invite=<clip id>&from=<name>. It's remembered until they make an
+// account; then both people get INVITE_KEYS (the sharer collects theirs next time their app signs in).
+const INVITE_KEY = "lockedin.invite", INVITE_KEYS = 50;
+const invite = (() => {
+  const q = new URLSearchParams(location.search), code = q.get("invite");
+  try {
+    if (/^[a-z0-9]{10}$/.test(code || "")) {
+      localStorage.setItem(INVITE_KEY, JSON.stringify({code, from: (q.get("from") || "A friend").slice(0, 30)}));
+      q.delete("invite"); q.delete("from");
+      const rest = q.toString();
+      history.replaceState(null, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
+    }
+    return JSON.parse(localStorage.getItem(INVITE_KEY)) || null;
+  } catch { return null; }
+})();
+if (invite) {
+  const line = `🎉 ${invite.from} invited you! Make a free account and you both get ${INVITE_KEYS} 🔑 keys.`;
+  for (const el of $$("[data-invite-note]")) { el.textContent = line; el.classList.remove("hidden"); }
+}
+let rewardsCheckedFor = null;
+async function settleInvites(id) {
+  if (!cloud || rewardsCheckedFor === id) return;
+  rewardsCheckedFor = id;
+  if (invite) {
+    try {
+      if (await cloud.claimInvite(invite.code)) {
+        rewards.award(INVITE_KEYS, `Joined from ${invite.from}'s invite 🎉`);
+        toast(`+${INVITE_KEYS} 🔑 for joining ${invite.from}!`);
+        track("invite_accepted");
+      }
+      localStorage.removeItem(INVITE_KEY);
+      $$("[data-invite-note]").forEach(el => el.classList.add("hidden"));
+    } catch (err) { console.warn("Invite not claimed", err); rewardsCheckedFor = null; }
+  }
+  try {
+    const n = await cloud.claimReferralRewards();
+    if (n > 0) {
+      rewards.award(INVITE_KEYS * n, n === 1 ? "A friend joined from your clip 🎉" : `${n} friends joined from your clips 🎉`);
+      toast(`+${INVITE_KEYS * n} 🔑 ${n === 1 ? "a friend" : n + " friends"} joined from your clip!`);
+      track("referral_reward", {friends: n});
+    }
+  } catch (err) { console.warn("Referral rewards unavailable", err); }
+}
+
 // Signed-out visitors are asked to make an account each time they open the site. "Not now" lasts for this visit.
 const LATER_KEY = "lockedin.acctLater";
 function maybePromptAccount() {
@@ -1457,7 +1502,7 @@ async function shareClipLink(clip, btn) {
 }
 async function sendLink(link, btn) {
   if (navigator.share) {
-    try { await navigator.share({title: "Caught locking out 😭", text: "Caught locking out on lockedin 😭", url: link}); btn.textContent = "Shared ✓"; track("clip_shared", {via: "link"}); return; }
+    try { await navigator.share({title: "Caught locking out 😭", text: `I got caught locking out on lockedin 😭 Lock in with me, we both get ${INVITE_KEYS} keys:`, url: link}); btn.textContent = "Shared ✓"; track("clip_shared", {via: "link"}); return; }
     catch (err) { if (err?.name === "AbortError") { btn.textContent = "🔗 Share link"; return; } }
   }
   try { await navigator.clipboard.writeText(link); btn.textContent = "Link copied ✓"; toast("Link copied. Paste it anywhere 🔗"); }

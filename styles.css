@@ -705,3 +705,4 @@ input[type=email], input[type=password] {
 .clip-row { display: grid; gap: 2px; min-width: 0; }
 .clip-row a { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .danger-text { color: var(--red, #ff5a5f); }
+.invite-note { margin: 8px auto 0; padding: 10px 14px; border-radius: 14px; background: color-mix(in srgb, var(--brand) 14%, transparent); border: 1px solid color-mix(in srgb, var(--brand) 40%, transparent); color: var(--text); font-weight: 700; font-size: 14px; line-height: 1.4; max-width: 420px; text-align: center; }
