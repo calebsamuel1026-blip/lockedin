@@ -1137,8 +1137,8 @@ $("#onboardDlg").addEventListener("click", e => {
 });
 $("#obDone").onclick = () => {
   store.save("onboarded", true);
-  $("#onboardDlg").close(); renderAll(); maybeAskConsent();
-  $("#startBtn").focus();
+  $("#onboardDlg").close(); renderAll();
+  if (!maybePromptAccount()) { maybeAskConsent(); $("#startBtn").focus(); }
 };
 function openOnboarding() {
   obStep = 0; showStep(0);
@@ -1244,6 +1244,8 @@ function startCloud() {
         if (id && id !== lastUser && via === "google") track(Date.now() - Date.parse(u.created_at) < 120000 ? "signup" : "login", {method: "google"});
         lastUser = id;
         renderAccount();
+        // Signed up from the welcome prompt: get out of the way so they can lock in.
+        if (id && $("#accountDlg").open && !$("#acctLater").classList.contains("hidden")) { $("#accountDlg").close(); toast("You're in! Your progress now saves to your account ✨"); }
       },
       onStatus: renderSync,
       onRemote: reloadFromStore,
@@ -1286,14 +1288,34 @@ function renderSync() {
     : s.state === "error" ? "Couldn't sync just now. lockedin will try again soon."
     : last ? `Synced ✓ ${last}` : "";
 }
-function openAccount() {
+function openAccount(prompted = false) {
   if ($("#settingsDlg").open) $("#settingsDlg").close();
   note("#authMsg", ""); note("#acctMsg", "");
   renderAccount();
+  $("#acctLater").classList.toggle("hidden", !prompted);
+  if (prompted) setAuthMode("up");
   $("#accountDlg").showModal();
   startCloud();
 }
-$("#accountBtn").onclick = openAccount;
+// Signed-out visitors are asked to make an account each time they open the site. "Not now" lasts for this visit.
+const LATER_KEY = "lockedin.acctLater";
+function maybePromptAccount() {
+  let later = false;
+  try { later = !!sessionStorage.getItem(LATER_KEY); } catch {}
+  if (passive || later || hadAccount() || cloud?.user || document.querySelector("dialog[open]")) return false;
+  track("account_prompt");
+  openAccount(true);
+  return true;
+}
+$("#acctLater").onclick = () => {
+  try { sessionStorage.setItem(LATER_KEY, "1"); } catch {}
+  track("account_prompt_later");
+  $("#accountDlg").close();
+  maybeAskConsent();
+  $("#startBtn").focus();
+};
+$("#accountDlg").addEventListener("close", () => maybeAskConsent());
+$("#accountBtn").onclick = () => openAccount();
 document.addEventListener("click", e => { if (e.target.closest("[data-open-account]")) openAccount(); });
 
 let authMode = "up";
@@ -1374,7 +1396,7 @@ $("#analyticsToggle").onchange = e => setAnalytics(e.target.checked);
 $("#s_analytics").onchange = e => setAnalytics(e.target.checked);
 $("#consentYes").onclick = () => setAnalytics(true);
 $("#consentNo").onclick = () => setAnalytics(false);
-function maybeAskConsent() { if (!analytics.consent() && !$("#onboardDlg").open) $("#consent").classList.remove("hidden"); }
+function maybeAskConsent() { if (!analytics.consent() && !$("#onboardDlg").open && !$("#accountDlg").open) $("#consent").classList.remove("hidden"); }
 
 // Diagnostics for troubleshooting detection: open the site with ?debug to expose numbers (no images).
 if (new URLSearchParams(location.search).has("debug")) window.__lockedin = {vision, live, engine, settings, get active() { return active; }};
@@ -1590,9 +1612,9 @@ $("#wrappedBtn").onclick = () => openWrapped();
   renderPlaces();
   showView(currentView());
   render();
-  if (!store.load("onboarded", false)) openOnboarding();
-  else maybeAskConsent();
   renderAccount();
+  if (!store.load("onboarded", false)) openOnboarding();
+  else if (!maybePromptAccount()) maybeAskConsent();
   track("app_open", {view: currentView(), returning: sessions.length > 0, onboarded: !!store.load("onboarded", false), had_account: hadAccount()});
   const seen = store.load("reportSeen", null), dow = new Date().getDay();
   if (sessions.length && seen !== dayKey(weekStartOf(new Date())) && (dow === settings.weekStart || dow === (settings.weekStart + 6) % 7)) $("#insightsBadge").classList.remove("hidden");

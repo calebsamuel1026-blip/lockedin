@@ -665,6 +665,7 @@ input[type=email], input[type=password] {
 }
 .acct-btn { position: relative; }
 .acct-dot { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 2px var(--surface); }
+.later-btn { display: block; margin: 12px auto 0; color: var(--text-2); font-weight: 600; }
 .acct-hero { text-align: center; display: grid; gap: 6px; justify-items: center; margin: 4px 0 18px; }
 .acct-hero b { font: 800 22px/1.2 var(--display); letter-spacing: -.035em; }
 .acct-glyph { font-size: 40px; line-height: 1; }
