@@ -218,7 +218,7 @@ async function endSession() {
   showSummary(rec);
   renderClips();
   renderAll();
-  $("#summaryDlg").addEventListener("close", () => $("#startBtn").focus({preventScroll: true}), {once: true});
+  $("#summaryDlg").addEventListener("close", () => { $("#startBtn").focus({preventScroll: true}); maybeAskConsent(); }, {once: true});
 }
 function showSummary(r) {
   const st = r.stats, g = today();
@@ -236,6 +236,7 @@ function showSummary(r) {
     ${r.worked.length ? `<p class="group-label">Time by goal</p><ul class="form-group plain-list" style="padding:0 16px">${r.worked.map(w => `<li><span>${esc(w.title)}</span><b>${fmtHM(w.sec)}</b></li>`).join("")}</ul>` : ""}
     ${g?.goals.length ? `<p class="sum-tip" style="margin-top:14px">Goals done today: <b>${g.goals.filter(x => x.done).length} of ${g.goals.length}</b></p>` : ""}
     <p class="sum-tip" style="margin-top:8px">${tip}</p>`;
+  $("#sumAcct")?.classList.toggle("hidden", !!cloud?.user);
   $("#summaryDlg").showModal();
 }
 
@@ -512,7 +513,7 @@ let lastIconState = "";
 function updateChrome(st) {
   if (active) {
     const flash = settings.titleAlerts && Date.now() < titleFlashUntil && Math.floor(Date.now() / 1000) % 2 === 0;
-    document.title = flash ? "Phone down!" : `${fmtClock(elapsedMs())} · ${LABEL[st] || "Focused"} — lockedin`;
+    document.title = flash ? "Phone down!" : `${fmtClock(elapsedMs())} · ${LABEL[st] || "Focused"} · lockedin`;
   } else document.title = "lockedin";
   if (st === lastIconState) return;
   lastIconState = st;
@@ -624,6 +625,8 @@ function render() {
   $("#best").textContent = fmtHM(active?.best ?? 0);
   $("#placeTag").textContent = active?.place ? `at ${active.place}` : "";
   renderTimeline($("#timeline"), active?.tl || []);
+  $("#sessionCard")?.classList.toggle("hidden", !has);
+  $("#tlLegend")?.classList.toggle("hidden", !(active?.tl || []).length);
 
   // camera chips
   const chips = [];
@@ -633,10 +636,10 @@ function render() {
     else if (vision.stalled) chips.push(`<span class="chip status">Reconnecting</span>`);
     else {
       if (q != null && q < 70) chips.push(`<span class="chip status bad" title="Your face is only found ${q}% of the time. Add light or angle the camera at your face.">Tracking ${q}%</span>`);
-      chips.push(vision.faceVisible ? `<span class="chip status ok">You're here</span>` : `<span class="chip status bad">No one seen</span>`);
+      chips.push(vision.present ? `<span class="chip status ok">You're here</span>` : `<span class="chip status bad">No one seen</span>`);
       if (vision.phoneInUse) chips.push(`<span class="chip status bad">Phone in use</span>`);
       else if (vision.phoneVisible) chips.push(`<span class="chip status">Phone nearby</span>`);
-      else if (vision.faceVisible && vision.headDownEMA > 0.6 && !settings.paperMode) chips.push(`<span class="chip status bad">Head down ${live.downSec ? live.downSec + "s" : ""}</span>`);
+      else if (vision.headDown && !settings.paperMode) chips.push(`<span class="chip status bad">Head down ${live.downSec ? live.downSec + "s" : ""}</span>`);
       if (vision.talking && settings.chatDetect) chips.push(`<span class="chip status ${collabOn() ? "ok" : "bad"}">Talking${vision.withOthers ? " · 2+ people" : ""}</span>`);
     }
     if (settings.paperMode) chips.push(`<span class="chip status">Paper mode</span>`);
@@ -965,7 +968,9 @@ function renderInsights() {
     <div class="kpi"><span class="k-label" style="color:#ff375f">Hours</span><b>${(w.sec / 3600).toFixed(1)}<small> / ${settings.weeklyGoalH}h</small></b>${hasPrev ? delta(w.sec / 3600, prev.sec / 3600, "h") : ""}</div>
     <div class="kpi"><span class="k-label" style="color:var(--green)">Focus</span><b>${w.focus ?? "--"}${w.focus != null ? "<small>%</small>" : ""}</b>${hasPrev ? delta(w.focus, prev.focus, " pts", true, 0) : ""}</div>
     <div class="kpi"><span class="k-label" style="color:var(--red)">Pickups / hr</span><b>${w.perHour != null ? w.perHour.toFixed(1) : "--"}</b>${hasPrev ? delta(w.perHour, prev.perHour, "", false) : `<span class="sub">${w.pickups} total</span>`}</div>
-    <div class="kpi"><span class="k-label" style="color:#5ac8fa">Goals</span><b>${w.goalsTotal ? `${w.goalsDone}<small> / ${w.goalsTotal}</small>` : "--"}</b><span class="sub">${w.daysIn} day${w.daysIn === 1 ? "" : "s"} tracked</span></div>`;
+    <div class="kpi"><span class="k-label" style="color:#5ac8fa">Days</span><b>${w.daysIn}<small> / 7</small></b><span class="sub">with a session</span></div>`;
+  $("#insEmpty")?.classList.toggle("hidden", w.ss.length > 0);
+  $("#wrappedBtn").classList.toggle("hidden", !w.ss.length);
 
   // days
   const per = w.days.map(d => {
@@ -1051,14 +1056,15 @@ function renderHistory() {
     <div class="kpi"><span class="k-label" style="color:#ff375f">Total</span><b>${(total / 3600).toFixed(1)}<small>h</small></b><span class="sub">locked in</span></div>
     <div class="kpi"><span class="k-label" style="color:var(--tint)">Sessions</span><b>${sessions.length}</b><span class="sub">all time</span></div>
     <div class="kpi"><span class="k-label" style="color:var(--green)">Focus</span><b>${f + p >= 60 ? Math.round(f / (f + p) * 100) + "<small>%</small>" : "--"}</b><span class="sub">all time</span></div>
-    <div class="kpi"><span class="k-label" style="color:var(--orange)">Streak</span><b>${streak}<small> day${streak === 1 ? "" : "s"}</small></b><span class="sub">hitting ${settings.dailyGoalH}h</span></div>`;
+    <div class="kpi"><span class="k-label" style="color:var(--orange)">Streak</span><b>${streak}<small> day${streak === 1 ? "" : "s"}</small></b><span class="sub">25+ min a day</span></div>`;
+  $("#csvBtn").disabled = $("#backupBtn").disabled = !sessions.length;
   const rows = [...sessions].sort((a, b) => b.start - a.start).slice(0, 200);
   $("#historyBody").innerHTML = rows.map(s => `<li>
       <div class="s-main"><b>${fmtHM(s.seconds)}${s.place ? ` · ${esc(s.place)}` : ""}</b>
         <span>${fmtDay(new Date(s.start))}, ${fmtTime(s.start)}${(s.worked || []).length ? " · " + s.worked.slice(0, 2).map(w => esc(w.title)).join(", ") : ""}</span></div>
       <div class="s-score">${s.score != null ? s.score + "%" : "--"}<small>${s.pickups} pickup${s.pickups === 1 ? "" : "s"}</small></div>
       <button class="icon-act danger" data-delsession="${esc(s.id)}" aria-label="Delete session from ${fmtDay(new Date(s.start))}">✕</button></li>`).join("")
-    || `<li class="empty-row">No sessions yet. Finished sessions show up here.</li>`;
+    || `<li class="empty-row">No sessions yet. Hit <a href="#focus">Lock in</a> and your finished sessions show up here.</li>`;
 }
 function download(name, text, type) {
   const a = document.createElement("a");
@@ -1123,7 +1129,7 @@ $("#forgetBtn").onclick = () => {
   $("#forgetBtn").textContent = "Re-learning…"; setTimeout(() => ($("#forgetBtn").textContent = "Re-learn my setup"), 3000);
 };
 $("#wipeBtn").onclick = () => {
-  if (!confirm("Delete ALL your lockedin data in this browser? Sessions, goals and settings will be gone. Download a backup first if you want to keep them. (If you're signed in, your account keeps its copy. Delete the account in Account to erase that too.)")) return;
+  if (!confirm("Delete all lockedin data in this browser?\n\nYour sessions, keys and settings here will be gone. Back up first (in History) if you want to keep them. If you're signed in, your account keeps its copy.")) return;
   if (vision.on) vision.stop();
   store.clearAll(); try { indexedDB.deleteDatabase("lockedin"); } catch {}
   location.hash = ""; location.reload();
@@ -1139,7 +1145,8 @@ $("#onboardDlg").addEventListener("click", e => {
 $("#obDone").onclick = () => {
   store.save("onboarded", true);
   $("#onboardDlg").close(); renderAll();
-  if (!maybePromptAccount()) { maybeAskConsent(); $("#startBtn").focus(); }
+  // Signed-out visitors are asked to make an account right after the welcome screen.
+  if (!maybePromptAccount()) $("#startBtn").focus();
 };
 function openOnboarding() {
   obStep = 0; showStep(0);
@@ -1156,7 +1163,14 @@ vision.addEventListener("status", ({detail: d}) => {
   else if (d.ok) track("model_loaded", {backend: d.backend, ms: d.ms});
   else track("model_failed", {reason: d.reason || ""});
 });
-vision.addEventListener("message", e => { const m = $("#camMsg"); m.textContent = e.detail; m.classList.toggle("hidden", !e.detail); });
+// Plain-language versions of the camera's status messages.
+const CAM_COPY = [[/^Loading the on-device vision models/, "Getting the phone catcher ready. The first time takes a few seconds…"],
+  [/^Couldn't load the vision models/, "Couldn't get the phone catcher ready. Check your internet, then turn the camera on again. The timer still works."]];
+vision.addEventListener("message", e => {
+  const m = $("#camMsg"), raw = e.detail || "";
+  m.textContent = CAM_COPY.find(([re]) => re.test(raw))?.[1] || raw;
+  m.classList.toggle("hidden", !raw);
+});
 // Learning happens in the background; save it now and then so the next visit starts warm.
 vision.addEventListener("learned", () => store.save("learn", vision.saved));
 window.addEventListener("pagehide", () => vision.workBuf.length && store.save("learn", vision.saved));
@@ -1269,6 +1283,7 @@ function renderAccount() {
   $("#acctDot").classList.toggle("hidden", !u);
   $("#accountBtn").setAttribute("aria-label", u ? "Account: signed in" : "Account and sync");
   $("#settingsAcct").textContent = u ? "Manage" : "Sign in";
+  const closeBtn = $("#accountDlg .sheet-bar [data-close]"); if (closeBtn) closeBtn.textContent = u ? "Done" : promptOpen ? "Not now" : "Close";
   $("#googleWrap").hidden = !GOOGLE_AUTH_ENABLED;
   const on = analytics.consent() === "granted";
   $("#analyticsToggle").checked = on; $("#s_analytics").checked = on;
@@ -1295,6 +1310,9 @@ function openAccount(prompted = false) {
   note("#authMsg", ""); note("#acctMsg", "");
   renderAccount();
   $("#acctLater").classList.toggle("hidden", !prompted);
+  promptOpen = prompted;
+  const closeBtn = $("#accountDlg .sheet-bar [data-close]");
+  if (closeBtn && prompted) closeBtn.textContent = "Not now";
   if (prompted) setAuthMode("up");
   $("#accountDlg").showModal();
   startCloud().then(renderMyClips);
@@ -1338,8 +1356,8 @@ async function settleInvites(id) {
   rewardsCheckedFor = id;
   if (invite) {
     try {
-      if (await cloud.claimInvite(invite.code)) {
-        rewards.award(INVITE_KEYS, `Joined from ${invite.from}'s invite 🎉`);
+      // grant() pays once per account even if this runs again after a cut-off try (the server answers yes again).
+      if (await cloud.claimInvite(invite.code) && rewards.grant("invite", INVITE_KEYS, `Joined from ${invite.from}'s invite 🎉`)) {
         toast(`+${INVITE_KEYS} 🔑 for joining ${invite.from}!`);
         track("invite_accepted");
       }
@@ -1348,33 +1366,38 @@ async function settleInvites(id) {
     } catch (err) { console.warn("Invite not claimed", err); rewardsCheckedFor = null; }
   }
   try {
-    const n = await cloud.claimReferralRewards();
+    const n = await cloud.claimReferralRewards(id => rewards.grant(id, INVITE_KEYS, "A friend joined from your clip 🎉"));
     if (n > 0) {
-      rewards.award(INVITE_KEYS * n, n === 1 ? "A friend joined from your clip 🎉" : `${n} friends joined from your clips 🎉`);
       toast(`+${INVITE_KEYS * n} 🔑 ${n === 1 ? "a friend" : n + " friends"} joined from your clip!`);
       track("referral_reward", {friends: n});
     }
   } catch (err) { console.warn("Referral rewards unavailable", err); }
 }
 
-// Signed-out visitors are asked to make an account each time they open the site. "Not now" lasts for this visit.
+// Signed-out visitors are asked to make an account each time they open the site (after the welcome screen on the
+// first visit). "Not now", the top button or Escape all dismiss it for the rest of this visit.
 const LATER_KEY = "lockedin.acctLater";
+let promptedThisVisit = false, promptOpen = false;
 function maybePromptAccount() {
   let later = false;
   try { later = !!sessionStorage.getItem(LATER_KEY); } catch {}
   if (passive || later || hadAccount() || cloud?.user || document.querySelector("dialog[open]")) return false;
+  promptedThisVisit = true;
   track("account_prompt");
   openAccount(true);
   return true;
 }
-$("#acctLater").onclick = () => {
-  try { sessionStorage.setItem(LATER_KEY, "1"); } catch {}
-  track("account_prompt_later");
-  $("#accountDlg").close();
-  maybeAskConsent();
-  $("#startBtn").focus();
-};
-$("#accountDlg").addEventListener("close", () => maybeAskConsent());
+$("#acctLater").onclick = () => $("#accountDlg").close();
+$("#accountDlg").addEventListener("close", () => {
+  if (promptOpen && !cloud?.user) {
+    try { sessionStorage.setItem(LATER_KEY, "1"); } catch {}
+    track("account_prompt_later");
+    $("#startBtn").focus();
+  }
+  promptOpen = false;
+  // Never stack the analytics question right on top of the account prompt.
+  if (!promptedThisVisit) maybeAskConsent();
+});
 $("#accountBtn").onclick = () => openAccount();
 document.addEventListener("click", e => { if (e.target.closest("[data-open-account]")) openAccount(); });
 
@@ -1456,10 +1479,46 @@ $("#analyticsToggle").onchange = e => setAnalytics(e.target.checked);
 $("#s_analytics").onchange = e => setAnalytics(e.target.checked);
 $("#consentYes").onclick = () => setAnalytics(true);
 $("#consentNo").onclick = () => setAnalytics(false);
-function maybeAskConsent() { if (!analytics.consent() && !$("#onboardDlg").open && !$("#accountDlg").open) $("#consent").classList.remove("hidden"); }
+// Asked once there's something to measure (after a first session), never on top of another prompt or mid-session.
+// Events wait in a local queue until then, so nothing is lost or sent early.
+function maybeAskConsent() {
+  if (analytics.consent() || !sessions.length || active || document.querySelector("dialog[open]")) return;
+  $("#consent").classList.remove("hidden");
+}
 
 // Diagnostics for troubleshooting detection: open the site with ?debug to expose numbers (no images).
 if (new URLSearchParams(location.search).has("debug")) window.__lockedin = {vision, live, engine, settings, get active() { return active; }};
+// ?debug&ui=<screen>: jump straight to one screen or dialog (for design reviews and screenshots). &seed adds demo sessions.
+function debugUi() {
+  const q = new URLSearchParams(location.search), ui = q.get("ui");
+  if (!q.has("debug") || !ui) return;
+  if (q.has("seed") && !sessions.length) {
+    const day = 86400000, now = Date.now();
+    for (let i = 0; i < 9; i++) {
+      const start = now - i * day * 0.8 - 3 * 3600000, sec = 1800 + i * 900;
+      sessions.push({id: "demo" + i, date: dayKey(new Date(start)), start, end: start + sec * 1000, seconds: sec, addedSec: 0, analyzedStart: start, place: i % 2 ? "Library" : "Home",
+        stats: {focused: sec * .8, phone: sec * .1, away: sec * .1, break: 0}, score: 89 - i, pickups: i % 4, best: 900, worked: [], tl: [], alerts: {}, keys: 40});
+    }
+    streakCache.at = 0;
+  }
+  document.querySelectorAll("dialog[open]").forEach(d => d.close());
+  $("#consent").classList.add("hidden");
+  if (ui === "consent") $("#consent").classList.remove("hidden");
+  else if (ui === "running") { startSession(); live.state = "focused"; }
+  else if (ui.startsWith("alert-")) { startSession(); const k = ui.slice(6); showAlert(k === "phone" ? "Phone down" : k === "chat" ? "Still chatting?" : "Wake up!", "Demo alert message for review.", k); }
+  else if (ui === "summary") { showSummary(sessions.at(-1) || {stats: {focused: 1200, phone: 60, away: 0, break: 0}, seconds: 1500, start: Date.now() - 1500000, end: Date.now(), score: 92, pickups: 1, best: 900, worked: []}); }
+  else if (ui === "camerr") vision.msg("Camera is blocked. Click the camera icon in your address bar, allow it, then turn the camera on again.");
+  else if (ui === "toasts") { toast("+5 🔑 25 phone-free minutes"); toast("−1 🔑", "spend"); toast("🔥 3-day streak"); }
+  else if (ui === "shopDlg") $("#keysBtn").click();
+  else if (ui === "settingsDlg") $("#settingsBtn").click();
+  else if (ui === "accountDlg") openAccount(q.has("prompted"));
+  else if (ui === "wrappedDlg") openWrapped(0);
+  else if (ui === "onboardDlg") openOnboarding();
+  else if (ui === "breakDlg") { startSession(); requestBreak(); }
+  else if (/^#?[\w-]+$/.test(ui) && document.getElementById(ui) instanceof HTMLDialogElement) document.getElementById(ui).showModal();
+  else if (location.hash !== "#" + ui && VIEWS.includes(ui)) location.hash = ui;
+  renderAll();
+}
 
 /* ================= lock-out clips ================= */
 vision.onFrame = (src, w, h) => clipper.capture(src, w, h);
@@ -1538,11 +1597,17 @@ $("#soundUpload").onchange = async e => {
 };
 
 /* ================= keys, shop, wrapped ================= */
+// Toasts: at most 3 on screen, and the same message twice in a row replaces itself instead of stacking.
 function toast(text, kind = "earn") {
+  const box = $("#toasts"), last = box.lastElementChild;
+  if (last && last.dataset.text === text) last.remove();
   const el = document.createElement("div");
-  el.className = "toast " + kind; el.textContent = text;
-  $("#toasts").append(el);
-  setTimeout(() => el.remove(), 2600);
+  const ms = kind === "info" || text.length > 40 ? 4200 : 2600;
+  el.className = "toast " + kind; el.textContent = text; el.dataset.text = text;
+  el.style.setProperty("--life", ms + "ms");
+  box.append(el);
+  while (box.children.length > 3) box.firstElementChild.remove();
+  setTimeout(() => el.remove(), ms);
 }
 let customUrl = null;
 async function loadCustom() {
@@ -1564,8 +1629,10 @@ async function applyWallpaper() {
 const STREAK_MILESTONES = [3, 7, 14, 30, 50, 100, 200, 365];
 function renderWallet() {
   $("#keysNum").textContent = rewards.wallet.keys;
+  $("#keysBtn").setAttribute("aria-label", `${rewards.wallet.keys} keys. Open the shop`);
   const s = streakInfo();
   $("#streakTop").textContent = s.count;
+  $("#streakBtn").setAttribute("aria-label", `Streak: ${s.count} day${s.count === 1 ? "" : "s"}${s.atRisk ? ", at risk today" : ""}`);
   $("#streakBtn").classList.toggle("cold", !s.count);
   $("#streakBtn").classList.toggle("risk", !!s.atRisk);
   // Milestones are reported once each (remembered on this device only).
@@ -1574,7 +1641,7 @@ function renderWallet() {
       localStorage.setItem("lockedin.milestone", s.count); track("streak_milestone", {days: s.count});
     }
   } catch {}
-  $("#streakBtn").title = s.atRisk ? `⌛ Lock in ${fmtHM(rewards.STREAK_MIN - s.todaySec)} more today to keep your ${s.count}-day streak` : `${s.count}-day streak. Lock in 25 minutes a day to keep it.`;
+  $("#streakBtn").title = s.atRisk ? `Lock in ${fmtHM(rewards.STREAK_MIN - s.todaySec)} more today to keep your ${s.count}-day streak` : `${s.count}-day streak. Lock in 25 minutes a day to keep it.`;
 }
 rewards.onChange(ev => {
   if (ev.type === "earn") toast(`+${ev.amount} 🔑 ${ev.why}`);
@@ -1610,7 +1677,7 @@ function renderShop() {
     || `<li class="secondary">Lock in to start earning.</li>`;
 }
 $("#keysBtn").onclick = async () => { await loadCustom(); renderShop(); $("#shopDlg").showModal(); };
-$("#streakBtn").onclick = () => { const s = streakInfo(); toast(s.atRisk ? `⌛ ${fmtHM(rewards.STREAK_MIN - s.todaySec)} left today to keep your streak` : `🔥 ${s.count}-day streak`); };
+$("#streakBtn").onclick = () => { const s = streakInfo(); toast(s.atRisk ? `⌛ Lock in ${fmtHM(rewards.STREAK_MIN - s.todaySec)} more today to keep your ${s.count}-day streak` : s.count ? `🔥 ${s.count}-day streak. Lock in 25 min a day to keep it.` : "🔥 Lock in 25 minutes today to start a streak", "info"); };
 $("#shopWalls").onclick = e => {
   const buy = e.target.closest("[data-buy-wp]")?.dataset.buyWp, use = e.target.closest("[data-equip]")?.dataset.equip;
   const price = rewards.WALLPAPERS.find(w => w.id === buy)?.price;
@@ -1670,7 +1737,7 @@ function showCard() {
   $("#story").innerHTML = `<div class="story-in"><b class="big">${esc(c.big)}</b><span class="sub">${esc(c.sub)}</span><p>${esc(c.note)}</p>
     ${c.share ? `<button class="pill filled lg" id="shareWeek">Share my week</button>` : ""}</div>`;
   if (c.share) $("#shareWeek").onclick = shareWeek;
-  else story.timer = setTimeout(() => step(1), 5000);
+  else if (!matchMedia("(prefers-reduced-motion: reduce)").matches) story.timer = setTimeout(() => step(1), 5000);
 }
 function step(d) { const n = story.i + d; if (n < 0) return; if (n >= story.cards.length) { $("#wrappedDlg").close(); return; } story.i = n; showCard(); }
 $("#storyNext").onclick = () => step(1);
@@ -1712,10 +1779,13 @@ $("#wrappedBtn").onclick = () => openWrapped();
   await new Promise(r => setTimeout(r, 400));
   if (!passive && active && settings.autoCamera) vision.start();
 
-  try {
-    const r = await fetch("/api/plan", {method: "GET"});
-    aiAvailable = r.ok && (await r.json()).ai === true;
-  } catch { aiAvailable = false; }
+  // The AI planner/coach only exist on the old Netlify host (functions). GitHub Pages has no /api, so don't ask.
+  if (!location.hostname.endsWith("github.io")) {
+    try {
+      const r = await fetch("/api/plan", {method: "GET"});
+      aiAvailable = r.ok && (await r.json()).ai === true;
+    } catch { aiAvailable = false; }
+  }
   renderAll();
 
   if (!GOALS_ENABLED) {
@@ -1726,4 +1796,5 @@ $("#wrappedBtn").onclick = () => openWrapped();
   // Only load the accounts library for people who have signed in before (or are coming back from Google).
   if (hadAccount() || new URLSearchParams(location.search).has("code")) startCloud();
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+  debugUi();
 })();

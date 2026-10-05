@@ -19,8 +19,11 @@ export const clips = [];
 const canvas = document.createElement("canvas");
 const ctx = canvas.getContext("2d");
 
-export function setEnabled(on) { enabled = !!on; if (!on) { ring = []; pending = null; } }
-export function reset() { ring = []; pending = null; clips.length = 0; lastAt = 0; }
+// Frames are ImageBitmaps (~0.4 MB each, up to ~200 held): close them as soon as they're dropped instead of
+// waiting for garbage collection.
+const closeAll = frames => frames?.forEach(f => f.close?.());
+export function setEnabled(on) { enabled = !!on; if (!on) { closeAll(ring); closeAll(pending?.frames); ring = []; pending = null; } }
+export function reset() { closeAll(ring); closeAll(pending?.frames); clips.forEach(c => closeAll(c.frames)); ring = []; pending = null; clips.length = 0; lastAt = 0; }
 
 // Called by the vision loop for each analysed frame (~5 per second). Keeps a short rolling buffer.
 export async function capture(source, w, h) {
@@ -32,8 +35,10 @@ export async function capture(source, w, h) {
   ctx.save(); ctx.translate(canvas.width, 0); ctx.scale(-1, 1); // selfie view
   ctx.drawImage(source, 0, 0, canvas.width, canvas.height); ctx.restore();
   const bmp = await createImageBitmap(canvas);
+  if (!enabled) { bmp.close?.(); return; }   // switched off while the bitmap was being made
+  // While a moment is recording, frames go to it (the ring was handed over); otherwise to the rolling buffer.
+  if (pending) { pending.frames.push(bmp); if (pending.frames.length >= FPS * (BEFORE + AFTER)) finish(); return; }
   ring.push(bmp); if (ring.length > FPS * BEFORE) ring.shift().close?.();
-  if (pending) { pending.frames.push(await createImageBitmap(canvas)); if (pending.frames.length >= FPS * (BEFORE + AFTER)) finish(); }
 }
 
 // Something funny happened: keep the last few seconds and record a few more.
@@ -99,6 +104,7 @@ export async function toVideo(clip) {
   rec.start();
   for (let loop = 0; loop < 2; loop++) for (let i = 0; i < clip.frames.length; i++) { drawFrame(g, clip, i, c.width, c.height); await new Promise(r => setTimeout(r, 1000 / FPS)); }
   rec.stop(); await done;
+  stream.getTracks().forEach(t => t.stop());
   const base = type.split(";")[0];
   return new File([new Blob(chunks, {type: base})], `lockedin-lockout.${base.endsWith("mp4") ? "mp4" : "webm"}`, {type: base});
 }

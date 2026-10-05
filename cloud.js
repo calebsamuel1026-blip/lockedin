@@ -1,7 +1,8 @@
 // Optional accounts and cross-device sync (Supabase). The app works fully signed out and offline.
 // What leaves the device when you're signed in: your progress (keys, streak days, settings, goals, session
-// history numbers) and one summary row per finished session. Camera frames, images, clips, audio and face
-// measurements never do (the "learn" face-pose samples and the in-progress session stay on this device).
+// history numbers) and one summary row per finished session. Camera frames, images, audio and face measurements
+// never do (the "learn" face-pose samples and the in-progress session stay on this device). The one exception is
+// a lock-out clip its owner explicitly shares as a link (shareClip below).
 // Everything fails soft: changes wait in localStorage and retry when the connection is back.
 import {createClient} from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 import {SUPABASE_URL, SUPABASE_KEY, GOOGLE_AUTH_ENABLED, APP_VERSION} from "./config.js";
@@ -45,11 +46,13 @@ function snapshot() {
   for (const k of SYNC_KEYS) { const v = store.load(k, null); if (v != null) s[k] = v; }
   return {wallet: rewards.wallet, store: s, version: meta.version ?? 0, updatedAt: meta.at || 0};
 }
-function apply(state) {
+// replace = the copy belongs to a different account than this device's data: take it as is. Otherwise wallets are
+// merged (counters, see merge.js), which also keeps keys earned in the last few seconds that weren't saved yet.
+function apply(state, replace = false) {
   applying = true;
   try {
     for (const k of SYNC_KEYS) if (state.store && k in state.store) store.save(k, state.store[k]);
-    if (state.wallet && Object.keys(state.wallet).length) rewards.replaceWallet(state.wallet);
+    if (state.wallet && Object.keys(state.wallet).length) rewards.replaceWallet(state.wallet, {merge: !replace});
   } finally { applying = false; }
   try { hooks.onRemote(); } catch (e) { console.error(e); }
 }
@@ -78,9 +81,10 @@ async function fullSync(attempt = 0) {
     const seq = changeSeq, remote = await pull(), local = snapshot();
     const mine = meta.userId === user.id;
     // Data here was last synced to a different account: start from this account's own copy instead of mixing.
-    const plan = meta.userId && !mine && !isEmpty(remote) ? {action: "pull", state: remote}
+    const switched = !!(meta.userId && !mine && !isEmpty(remote));
+    const plan = switched ? {action: "pull", state: remote}
       : decide(local, remote, {syncedVersion: mine ? meta.version ?? null : null, dirty: mine ? !!meta.dirty : true});
-    if (plan.action === "pull" || plan.action === "merge") apply(plan.state);
+    if (plan.action === "pull" || plan.action === "merge") apply(plan.state, switched);
     let version = remote?.version ?? null;
     if (plan.action === "push" || plan.action === "merge") {
       version = await push(plan.action === "merge" ? plan.state : local, remote ? remote.version : null);
@@ -175,6 +179,7 @@ function friendly(error) {
   if (/signups? not allowed|signups are disabled/i.test(m)) return new Error("New accounts are paused right now. Try again later.");
   if (/valid email|invalid email/i.test(m)) return new Error("That email doesn't look right.");
   if (/fetch|network/i.test(m)) return new Error("Can't reach the server. Check your connection and try again.");
+  if (/row-level security|violates.*policy/i.test(m)) return new Error("You've shared as many clips as an account can keep. Delete an old one in Account first.");
   return new Error(m || "Something went wrong. Try again.");
 }
 const cleanEmail = e => String(e || "").trim().toLowerCase();
@@ -207,9 +212,19 @@ export async function signOut() {
 }
 // Deletes every row about you in the database and your login, then this device's copy.
 export async function deleteAccount() {
-  // Shared clip videos sit in storage, which the database function can't empty, so remove them first.
-  const mine = await myClips().catch(() => []);
-  if (mine.length) await sb.storage.from("clips").remove(mine.map(c => c.path)).catch(() => {});
+  // Shared clip videos sit in storage, which the database function can't reliably empty, so remove them first:
+  // everything in this account's folder, including uploads whose link row was never saved. If that fails, stop,
+  // so no public video is left behind without an account that could delete it.
+  if (user) {
+    const bucket = sb.storage.from("clips");
+    for (let round = 0; round < 20; round++) {
+      const {data, error} = await bucket.list(user.id, {limit: 100});
+      if (error) throw new Error("Couldn't delete your shared clips. Check your connection and try again.");
+      if (!data?.length) break;
+      const rm = await bucket.remove(data.map(f => `${user.id}/${f.name}`));
+      if (rm.error) throw new Error("Couldn't delete your shared clips. Check your connection and try again.");
+    }
+  }
   const {error} = await sb.rpc("delete_my_account");
   if (error) throw friendly(error);
   await sb.auth.signOut({scope: "local"}).catch(() => {});
@@ -237,10 +252,23 @@ export async function claimInvite(code) {
   if (error) throw friendly(error);
   return data === true;
 }
-export async function claimReferralRewards() {
-  const {data, error} = await sb.rpc("claim_referral_rewards");
-  if (error) throw friendly(error);
-  return data || 0;
+// Two steps so a reward can't be lost: fetch the unpaid referrals, let the app pay each one (onEach(id) returns
+// true if it was new; the wallet keys grants by id, so a retry or a second device never pays twice), then mark
+// them paid. Without onEach (an older app.js still open) it falls back to counting. Returns how many were new.
+export async function claimReferralRewards(onEach) {
+  const pending = await sb.rpc("pending_referral_rewards");
+  if (pending.error) {
+    if (pending.error.code !== "PGRST202") throw friendly(pending.error);   // 005_audit.sql not run yet
+    const {data, error} = await sb.rpc("claim_referral_rewards");
+    if (error) throw friendly(error);
+    return onEach ? [...Array(data || 0)].filter((_, i) => onEach(`legacy-${Date.now()}-${i}`)).length : data || 0;
+  }
+  const ids = (pending.data || []).map(Number).filter(Number.isFinite);   // referral numbers, never other people's account ids
+  if (!ids.length) return 0;
+  const fresh = onEach ? ids.filter(id => onEach(`ref:${id}`)).length : ids.length;
+  const ack = await sb.rpc("ack_referral_rewards", {ids});
+  if (ack.error) console.warn("lockedin referral ack", ack.error);   // paid already; the next try is a no-op
+  return fresh;
 }
 export async function myClips() {
   if (!user) return [];
@@ -276,15 +304,30 @@ async function loadProfile() {
 export async function exportMyData() {
   const out = {app: "lockedin", exportedAt: new Date().toISOString(), thisDevice: store.exportAll()};
   if (user) {
-    const [p, st, fs] = await Promise.all([
+    const [p, st, fs, clips, refs] = await Promise.all([
       sb.from("profiles").select("*").eq("id", user.id).maybeSingle(),
       sb.from("user_state").select("*").eq("user_id", user.id).maybeSingle(),
-      sb.from("focus_sessions").select("*").order("started_at", {ascending: true}).limit(10000),
+      allSessions(),
+      sb.from("shared_clips").select("id, path, caption, kind, created_at, views").order("created_at", {ascending: true}),
+      sb.rpc("my_referrals"),
     ]);
-    out.account = {id: user.id, email: user.email, createdAt: user.created_at, profile: p.data, syncedProgress: st.data, sessions: fs.data || [],
+    out.account = {id: user.id, email: user.email, createdAt: user.created_at, profile: p.data, syncedProgress: st.data, sessions: fs,
+      sharedClips: (clips.data || []).map(c => ({...c, link: clipLink(c.id)})), referrals: refs.error ? null : refs.data,
       note: "Analytics events can't be read back by the app. They are deleted along with your account."};
   }
   return out;
+}
+
+// The API returns at most 1000 rows per request, so page through the whole log.
+async function allSessions() {
+  const rows = [];
+  for (let from = 0; from < 100000; from += 1000) {
+    const {data, error} = await sb.from("focus_sessions").select("*").order("started_at", {ascending: true}).range(from, from + 999);
+    if (error) throw friendly(error);
+    rows.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return rows;
 }
 
 async function onSession(event, session) {

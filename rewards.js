@@ -1,6 +1,7 @@
 // Keys (currency), shop, streaks and "Your week, wrapped". Pure logic plus a share-image renderer.
 import {image, lead} from "./icons.js";
 import * as store from "./store.js";
+import {normalizeWallet, mergeWallets, walletTotals} from "./merge.js";
 
 export const STREAK_MIN = 25 * 60;     // seconds locked in per day to keep your streak alive
 export const FREEZE_PRICE = 60;
@@ -21,30 +22,74 @@ export const WALLPAPERS = [
 ];
 export const BREAKS = [{min: 5, price: 15}, {min: 10, price: 30}, {min: 15, price: 40}];
 
-const fresh = () => ({keys: 0, earned: 0, owned: ["midnight"], equipped: "midnight", freezes: 0, frozenDays: [], goalDays: [], ledger: [], secAcc: 0});
-export let wallet = {...fresh(), ...store.load("wallet", {})};
-const save = () => store.save("wallet", wallet);
+const fresh = () => normalizeWallet({keys: 0, earned: 0, owned: ["midnight"], equipped: "midnight", freezes: 0, frozenDays: [], goalDays: [], ledger: [], secAcc: 0});
+// This browser's id in wallet.dev (see merge.js). A new id whenever the wallet starts over (first run, "Delete all
+// data", restoring a backup), so this device's counters never restart below a copy the account already has.
+const DEVICE_KEY = "lockedin.device";
+const stored = store.load("wallet", null);
+const device = (() => {
+  try {
+    let id = localStorage.getItem(DEVICE_KEY);
+    if (!id || !stored) { id = Array.from(crypto.getRandomValues(new Uint8Array(6)), b => b.toString(36).padStart(2, "0")).join(""); localStorage.setItem(DEVICE_KEY, id); }
+    return id;
+  } catch { return "m" + Math.random().toString(36).slice(2, 10); }   // no storage: a fresh id per visit is still correct
+})();
+export let wallet = stored ? normalizeWallet({...fresh(), ...stored}) : fresh();
+let selfSave = false, unsaved = false;
+// Merge with the copy on disk first: another tab may have earned or spent since this one last looked.
+const save = () => {
+  wallet = mergeWallets(wallet, store.load("wallet", null) || {});
+  selfSave = true;
+  try { store.save("wallet", wallet); } finally { selfSave = false; }
+  unsaved = false;
+};
 const listeners = new Set();
 export const onChange = fn => listeners.add(fn);
 const emit = ev => listeners.forEach(fn => fn(ev));
+// Someone else rewrote the saved wallet (Delete all data, restore, account deleted): drop the in-memory copy.
+store.onSave(key => {
+  if (key !== "wallet" || selfSave) return;
+  wallet = normalizeWallet({...fresh(), ...(store.load("wallet", null) || {})}); unsaved = false; emit({type: "sync"});
+});
+// Another tab saved: fold its counters in.
+addEventListener("storage", e => {
+  if (e.key !== "lockin.v1.wallet") return;
+  try { wallet = e.newValue ? mergeWallets(wallet, JSON.parse(e.newValue)) : fresh(); emit({type: "sync"}); } catch {}
+});
+// Per-second earnings are only written every few minutes; don't lose them when the tab closes or hides.
+addEventListener("pagehide", () => unsaved && save());
+document.addEventListener("visibilitychange", () => document.hidden && unsaved && save());
 
-// Keys earned per day, for the weekly recap.
-function logDay(n) { const k = dk(new Date()); (wallet.byDay ||= {})[k] = (wallet.byDay[k] || 0) + n; }
-export const earnedOn = day => wallet.byDay?.[day] || 0;
-// Cloud sync pulled a newer wallet from another device.
-export function replaceWallet(w) { wallet = {...fresh(), ...w}; save(); emit({type: "sync"}); }
+const mine = () => (wallet.dev[device] ||= {e: 0, s: 0, fb: 0, d: {}});
+function logDay(n) { const k = dk(new Date()), d = (mine().d ||= {}); d[k] = (d[k] || 0) + n; }
+const recompute = () => Object.assign(wallet, (({keys, earned, freezes}) => ({keys, earned, freezes}))(walletTotals(wallet)));
+const note = (amt, why) => { wallet.ledger.push({t: Date.now(), amt, why}); if (wallet.ledger.length > 300) wallet.ledger.shift(); };
+
+// Keys earned per day, for the weekly recap: the old per-day map plus every device's counters.
+export const earnedOn = day => (wallet.byDay?.[day] || 0) + Object.values(wallet.dev || {}).reduce((a, d) => a + (d?.d?.[day] || 0), 0);
+// Cloud sync brought another copy. Same account: merge (keeps anything not saved yet). Different account: replace.
+export function replaceWallet(w, {merge = false} = {}) {
+  wallet = merge ? mergeWallets(wallet, w) : normalizeWallet({...fresh(), ...w});
+  save(); emit({type: "sync"});
+}
 
 export function award(amount, why) {
   amount = Math.round(amount);
   if (amount <= 0) return;
-  wallet.keys += amount; wallet.earned += amount; logDay(amount);
-  wallet.ledger.push({t: Date.now(), amt: amount, why}); if (wallet.ledger.length > 300) wallet.ledger.shift();
+  mine().e += amount; logDay(amount); recompute(); note(amount, why);
   save(); emit({type: "earn", amount, why});
+}
+// A one-off reward, paid at most once per id across all devices. Returns true if it was new.
+export function grant(id, amount, why) {
+  amount = Math.round(amount);
+  if (amount <= 0 || wallet.grants[id] != null) return false;
+  wallet.grants[id] = amount; logDay(amount); recompute(); note(amount, why);
+  save(); emit({type: "earn", amount, why});
+  return true;
 }
 export function spend(amount, why) {
   if (wallet.keys < amount) return false;
-  wallet.keys -= amount;
-  wallet.ledger.push({t: Date.now(), amt: -amount, why}); if (wallet.ledger.length > 300) wallet.ledger.shift();
+  mine().s += amount; recompute(); note(-amount, why);
   save(); emit({type: "spend", amount, why});
   return true;
 }
@@ -55,13 +100,14 @@ export const multiplier = streak => (streak >= 14 ? 2 : streak >= 7 ? 1.5 : stre
 // Called once per focused second. focusRun = seconds focused in a row this session.
 export function onFocusedSecond(focusRun, streak) {
   wallet.secAcc = (wallet.secAcc || 0) + multiplier(streak) / 60;
-  if (wallet.secAcc >= 1) { const whole = Math.floor(wallet.secAcc); wallet.secAcc -= whole; wallet.keys += whole; wallet.earned += whole; logDay(whole); if (focusRun % 300 === 0) save(); emit({type: "tick"}); }
+  if (wallet.secAcc >= 1) { const whole = Math.floor(wallet.secAcc); wallet.secAcc -= whole; mine().e += whole; logDay(whole); recompute(); unsaved = true; emit({type: "tick"}); }
+  if (unsaved && focusRun % 300 === 0) save();
   if (focusRun > 0 && focusRun % 1500 === 0) award(5, "25 phone-free minutes");
 }
 export function onDailyGoal(day) {
   if (wallet.goalDays.includes(day)) return;
   wallet.goalDays.push(day); if (wallet.goalDays.length > 60) wallet.goalDays.shift();
-  award(20, "Hit your daily goal");
+  if (!grant(`goal:${day}`, 20, "Hit your daily goal")) save();
 }
 
 export function buyWallpaper(id) {
@@ -74,7 +120,7 @@ export function equip(id) { if (wallet.owned.includes(id)) { wallet.equipped = i
 export function buyFreeze() {
   if (wallet.freezes >= MAX_FREEZES) return false;
   if (!spend(FREEZE_PRICE, "Streak freeze")) return false;
-  wallet.freezes++; save(); return true;
+  mine().fb = (mine().fb || 0) + 1; recompute(); save(); return true;
 }
 
 // ---------- streaks ----------
@@ -86,7 +132,8 @@ export function applyFreezes(byDay) {
   const yk = dk(y);
   const keptBefore = (byDay[dk(before)] || 0) >= STREAK_MIN || wallet.frozenDays.includes(dk(before));
   if ((byDay[yk] || 0) < STREAK_MIN && !wallet.frozenDays.includes(yk) && wallet.freezes > 0 && keptBefore) {
-    wallet.freezes--; wallet.frozenDays.push(yk); if (wallet.frozenDays.length > 30) wallet.frozenDays.shift();
+    wallet.fz = [...new Set([...(wallet.fz || []), yk])].sort(); recompute();
+    wallet.frozenDays.push(yk); if (wallet.frozenDays.length > 30) wallet.frozenDays.shift();
     save(); emit({type: "freeze", day: yk});
     return true;
   }

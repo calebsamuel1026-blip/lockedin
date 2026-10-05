@@ -36,11 +36,21 @@ export function importAll(obj) {
   if (!obj || obj.app !== "lock-in-tracker" || typeof obj.data !== "object") throw new Error("This isn't a Lock In backup file.");
   if (!Array.isArray(obj.data.sessions ?? [])) throw new Error("The backup's sessions are damaged.");
   const cleanId = v => String(v ?? "").replace(/[^a-z0-9]/gi, "").slice(0, 40) || Math.random().toString(36).slice(2);
-  for (const s of obj.data.sessions || []) { s.id = cleanId(s.id); s.seconds = +s.seconds || 0; s.pickups = +s.pickups || 0; }
+  // A backup is a file anyone could have edited: force every field the app prints into a safe shape.
+  const num = v => (Number.isFinite(+v) ? +v : 0);
+  for (const s of obj.data.sessions || []) {
+    s.id = cleanId(s.id); s.seconds = num(s.seconds); s.pickups = num(s.pickups); s.start = num(s.start); if (s.end != null) s.end = num(s.end);
+    s.score = s.score == null ? null : Math.max(0, Math.min(100, Math.round(num(s.score))));
+    if (s.place != null) s.place = String(s.place).slice(0, 40);
+  }
   for (const day of Object.values(obj.data.goals || {})) for (const g of day?.goals || []) { g.id = cleanId(g.id); g.minutes = +g.minutes || 30; g.title = String(g.title ?? "").slice(0, 140); }
+  newDevice();
   for (const k of KEYS) if (k in obj.data) save(k, obj.data[k]);
 }
+// The wallet starts over from here, so this browser takes a new id in its counters (see rewards.js / merge.js).
+function newDevice() { try { localStorage.removeItem("lockedin.device"); } catch {} }
 
 export function clearAll() {
+  newDevice();
   for (const k of KEYS) save(k, null);
 }

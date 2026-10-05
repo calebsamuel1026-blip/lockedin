@@ -6,12 +6,22 @@
 //    when a phone is around or you're tipped down. It follows you if you move the laptop.
 //  - Phone pose: whenever the phone detector sees a phone in your hand, your head pose at that moment
 //    is saved as an example of "you on your phone". This sharpens phone detection over time.
-//  - Feedback: "Not my phone" adds your current pose to the work zone.
+//  - Feedback: "Not my phone" saves your current pose (or, with the face out of view, how far your head dropped) as an
+//    exception, without stretching the work zone.
+//  - Head down: past the zone's lower edge, or far below its middle whatever the zone learned. When you look down so far
+//    the face tracker loses you (common with a webcam above your eyes), the pitch trend just before, the top of your
+//    body box and the pose model (nose sinking toward the shoulders) keep the head-down count going.
+//  - Camera moved: when your face jumps in the picture far more than a head movement would explain, the zone moves too.
 // Signals exposed to the app: phone in hand, phone call, phone posture, head down, head on the desk, eyes closed,
 // yawns, looking off-screen, turned sideways, talking (not chewing), other people in frame, and tracking quality.
 const MP = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1";
 const FACE_MODEL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 const OBJ_MODEL = "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite2/float16/1/efficientdet_lite2.tflite";
+// Body pose (lite, ~5 MB): loaded in the background after start-up and only run when the face is lost (plus a sample
+// every few seconds to learn how you normally sit). It still finds your head and shoulders when you look so far down
+// that the face tracker gives up (MediaPipe's face models lose faces turned more than ~45 degrees).
+const POSE_MODEL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+const POSE_LOST_MS = 1000, POSE_BASE_MS = 2500, POSE_DELAY_MS = 20000;
 const FACE_EVERY_MS = 200;
 const OBJ_EVERY_MS = 1200;
 const LEARN_EVERY_MS = 1000;   // one learning sample per second
@@ -20,11 +30,18 @@ const MIN_TO_JUDGE = 15;       // ~15 seconds of learning before judging
 const DEG = 180 / Math.PI;
 
 // Detection thresholds. Defaults were picked by tests/tune.mjs against thousands of simulated users.
-export const TUNE = {eyeMove: 0.05, marginPitch: 8, marginYaw: 14, marginEye: 5, phoneNear: 0.95, downDeg: 12, downRatio: 0.1, eyeDown: 8, matchDeg: 5,
+export const TUNE = {eyeMove: 0.05, marginPitch: 8, marginYaw: 14, marginEye: 5, phoneNear: 0.95, downDeg: 15, downRatio: 0.1, eyeDown: 8, matchDeg: 5,
   sideExtra: 4,       // degrees past the work zone's side edge (plus margin) that count as "turned away"
   deskHits: 0.15,     // face found in under this share of recent frames after eyes shut = head on the desk
   talkSd: 0.05, talkOpen: 0.18, chewRhythm: 0.6, // jaw spread, widest opening, and how clock-like the jaw can be and still be speech
-  callCy: 0.42, callHoldMs: 12000};  // a phone seen this high in frame (at your ear) while you talk = phone call
+  callCy: 0.42, callHoldMs: 12000,  // a phone seen this high in frame (at your ear) while you talk = phone call
+  // Head down, independent of the learned zone: this many degrees below the middle of your work zone is always down,
+  // and the zone's lower edge can't stretch further than zoneCap below its middle (lots of writing can't make
+  // "fully down" look normal).
+  steepDeg: 30, zoneCap: 14,
+  // Face lost: head counted as down when the nose has sunk this far toward the shoulder line (shoulder widths, pose
+  // model) or the top of your body box has dropped this much (share of frame height) from how you normally sit.
+  poseDrop: 0.22, topDrop: 0.045, lossHoldMs: 15000};
 
 // Try the graphics card first. If that fails, retry on the CPU with a fresh runtime, because a failed
 // GPU start can leave the shared one unusable.
@@ -69,6 +86,7 @@ function measure(r, i) {
     // Horizontal gaze: both eyes looking the same way (left eye out + right eye in = looking one side).
     gazeX: ((bs.eyeLookOutLeft || 0) - (bs.eyeLookInLeft || 0) + (bs.eyeLookInRight || 0) - (bs.eyeLookOutRight || 0)) / 2,
     blink: ((bs.eyeBlinkLeft || 0) + (bs.eyeBlinkRight || 0)) / 2,
+    cy: nose.y,
     smile: ((bs.mouthSmileLeft || 0) + (bs.mouthSmileRight || 0)) / 2,
     brow: bs.browInnerUp || 0,
     jaw: bs.jawOpen || 0,
@@ -83,16 +101,21 @@ const sorted = arr => Float64Array.from(arr).sort();
 const at = (a, p) => a[Math.min(a.length - 1, Math.max(0, Math.round(p * (a.length - 1))))];
 const pct = (arr, p) => at(sorted(arr), p);
 
-// Build the model from learned samples. work: [{f, ratio}], phone: [f].
-export function buildModel(work, phone) {
+// Build the model from learned samples. work: [{f, ratio, cy, size}], phone: [f]. dir: which pitch sign is "down"
+// (learned separately, 0 = not known yet).
+export function buildModel(work, phone, dir = 0) {
   const F = work.map(w => w.f);
   const cols = [0, 1, 2].map(k => sorted(F.map(f => f[k])));
-  const min = cols.map(c => at(c, 0.1)), max = cols.map(c => at(c, 0.9));
+  const min = cols.map(c => at(c, 0.1)), max = cols.map(c => at(c, 0.9)), med = cols.map(c => at(c, 0.5));
   const ratioMax = pct(work.map(w => w.ratio), 0.9);
   const ph = phone.length >= 4 ? [0, 1, 2].map(k => pct(phone.map(f => f[k]), 0.5)) : null;
-  const downSign = ph ? Math.sign(ph[0] - (min[0] + max[0]) / 2) || 0 : 0;
+  // Without a learned direction, a learned phone pose tells which way is down.
+  const downSign = dir || (ph ? Math.sign(ph[0] - med[0]) || 0 : 0);
+  // Where your face sits in the picture while working (to tell a moved camera from a moved head).
+  const geo = work.filter(w => w.cy != null && w.size);
+  const cy = geo.length >= 10 ? pct(geo.map(w => w.cy), 0.5) : null, size = geo.length >= 10 ? pct(geo.map(w => w.size), 0.5) : null;
   const step = Math.max(1, Math.floor(F.length / 40));
-  return {v: 3, work: F.filter((_, i) => i % step === 0).slice(-40), min, max, ratioMax, phone: ph, downSign, at: Date.now()};
+  return {v: 3, work: F.filter((_, i) => i % step === 0).slice(-40), min, max, med, ratioMax, phone: ph, downSign, cy, size, at: Date.now()};
 }
 
 export class Vision extends EventTarget {
@@ -110,6 +133,14 @@ export class Vision extends EventTarget {
     this.jawHist = []; this.jawSlots = []; this.talkEMA = 0; this.talkAt = 0; this.sideEMA = 0; this.sideAtLoss = false; this.closedEMA = 0; this.callAt = 0;
     this.closedSince = 0; this.yawnSince = 0; this.yawns = [];
     this.hits = [];
+    // Head-down evidence that survives losing the face: recent pitch trend, body box top, pose (nose vs shoulders).
+    this.pdHist = []; this.frameDown = false; this.trendDown = false;
+    this.topHist = []; this.top = null; this.topAt = 0;
+    this.noseHist = []; this.poseNose = null; this.poseAt = 0; this.poseSeenAt = 0; this.lastPose = 0; this.pose = null;
+    // Which pitch sign means "down": learned from how pitch moves with the nose-to-chin ratio (a geometric fact that
+    // doesn't depend on the matrix convention or where the camera sits). Running covariance sums.
+    this.dirStats = {n: 0, sp: 0, sr: 0, spp: 0, srr: 0, spr: 0}; this.downDir = 0;
+    this.moveHist = []; this.cameraMovedAt = 0; this.closedHist = []; this.errors = 0;
   }
 
   msg(text) { this.dispatchEvent(new CustomEvent("message", {detail: text})); }
@@ -118,15 +149,21 @@ export class Vision extends EventTarget {
   changed() { this.dispatchEvent(new Event("change")); }
 
   // Saved learning from a previous visit seeds the buffers so detection is warm right away.
-  get saved() { return {v: 3, work: this.workBuf.slice(-120), phone: this.phoneBuf.slice(-30), taught: (this.taught || []).slice(-12)}; }
+  get saved() { return {v: 3, work: this.workBuf.slice(-120), phone: this.phoneBuf.slice(-30), taught: (this.taught || []).slice(-12), taughtBody: (this.taughtBody || []).slice(-6), dir: this.downDir}; }
   restore(data) {
     if (!data || data.v !== 3) return;
     this.workBuf = (data.work || []).filter(w => Array.isArray(w?.f)).slice(-120);
     this.phoneBuf = (data.phone || []).filter(Array.isArray).slice(-30);
     this.taught = (data.taught || []).filter(Array.isArray).slice(-12);
-    if (this.workBuf.length >= MIN_TO_JUDGE) this.model = buildModel(this.workBuf, this.phoneBuf);
+    if (data.dir === 1 || data.dir === -1) this.downDir = data.dir;
+    this.taughtBody = (data.taughtBody || []).filter(t => t && typeof t.drop === "number").slice(-6);
+    if (this.workBuf.length >= MIN_TO_JUDGE) this.model = buildModel(this.workBuf, this.phoneBuf, this.downDir);
   }
-  forget() { this.workBuf = []; this.phoneBuf = []; this.taught = []; this.model = null; this.dispatchEvent(new Event("learned")); this.changed(); }
+  forget() {
+    this.workBuf = []; this.phoneBuf = []; this.taught = []; this.taughtBody = []; this.model = null; this.downDir = 0;
+    this.dirStats = {n: 0, sp: 0, sr: 0, spp: 0, srr: 0, spr: 0}; this.topHist = []; this.noseHist = [];
+    this.dispatchEvent(new Event("learned")); this.changed();
+  }
 
   start() {
     if (this.on && this.ready) return Promise.resolve();
@@ -160,8 +197,9 @@ export class Vision extends EventTarget {
       this.msg("Loading the on-device vision models (first time takes a few seconds)…");
       const t0 = performance.now();
       try {
-        const {FilesetResolver, FaceLandmarker, ObjectDetector} = await import(`${MP}/vision_bundle.mjs`);
+        const {FilesetResolver, FaceLandmarker, ObjectDetector, PoseLandmarker} = await import(`${MP}/vision_bundle.mjs`);
         const fileset = await FilesetResolver.forVisionTasks(`${MP}/wasm`);
+        this._mp = {FilesetResolver, PoseLandmarker, fileset};
         this.face = await makeTask(FaceLandmarker, fileset, FACE_MODEL, {numFaces: 3, outputFaceBlendshapes: true, outputFacialTransformationMatrixes: true,
           minFaceDetectionConfidence: 0.3, minFacePresenceConfidence: 0.3, minTrackingConfidence: 0.3}, FilesetResolver);
         this.obj = await makeTask(ObjectDetector, fileset, OBJ_MODEL, {scoreThreshold: 0.3, maxResults: 5, categoryAllowlist: ["cell phone", "person"]}, FilesetResolver);
@@ -183,6 +221,39 @@ export class Vision extends EventTarget {
     this.msg("");
     this.dispatchEvent(new Event("ready"));
     this.changed();
+    // The pose model is a fallback, so it loads after start-up and never holds the camera up.
+    if (!this.pose && !this._poseLoading) setTimeout(() => this.loadPose(), POSE_DELAY_MS);
+  }
+
+  async loadPose() {
+    if (this.pose || this._poseLoading || !this._mp?.PoseLandmarker) return;
+    this._poseLoading = true;
+    try {
+      const {FilesetResolver, PoseLandmarker, fileset} = this._mp;
+      this.pose = await makeTask(PoseLandmarker, fileset, POSE_MODEL, {numPoses: 1, minPoseDetectionConfidence: 0.4,
+        minPosePresenceConfidence: 0.4, minTrackingConfidence: 0.4}, FilesetResolver);
+    } catch (err) { console.warn("Pose model unavailable; head-down tracking uses the face and body box only", err); }
+    this._poseLoading = false;
+  }
+
+  // Whether to run the pose model on this frame: often while the face is lost and someone is still in the chair,
+  // and now and then while you work (to learn your normal posture). Most frames skip it.
+  wantPose(faceNow) {
+    const now = Date.now();
+    if (faceNow) return now - this.lastPose >= (this.noseHist.length < 10 ? POSE_BASE_MS : POSE_BASE_MS * 4) && !this.frameDown && (this.lastPose = now, true);
+    const seen = now - Math.max(this.faceAt || 0, this.personAt || 0, this.poseSeenAt || 0) < 6000;
+    return seen && now - this.lastPose >= POSE_LOST_MS && (this.lastPose = now, true);
+  }
+
+  // Nose height above the shoulder line, in shoulder widths (pixels, so the frame's shape doesn't matter).
+  static poseNose(r, w, h) {
+    const L = r?.landmarks?.[0];
+    if (!L) return null;
+    const n = L[0], a = L[11], b = L[12];
+    if ((a.visibility ?? 1) < 0.5 || (b.visibility ?? 1) < 0.5) return null;
+    const sw = Math.hypot((a.x - b.x) * w, (a.y - b.y) * h);
+    if (sw < 1e-3) return null;
+    return {nose: ((a.y + b.y) / 2 - n.y) * h / sw};
   }
 
   // Reading frames straight from the camera track keeps detection running when the tab is hidden.
@@ -219,8 +290,15 @@ export class Vision extends EventTarget {
     if (this.busy || t - this.lastFace < FACE_EVERY_MS) return;
     this.busy = true; this.lastFace = t; this.lastFrameAt = Date.now();
     try {
+      if (!this.face) return; // models are being rebuilt
       try { this.onFrame?.(source, w, h); } catch {}
-      const r = this.face.detectForVideo(source, t);
+      let r;
+      try { r = this.face.detectForVideo(source, t); this.errors = 0; }
+      catch (err) {
+        // A lost graphics context makes every call fail. After a few in a row, rebuild the models on the CPU.
+        if (++this.errors >= 5) this.rebuildOnCpu(err);
+        return;
+      }
       const face = r.faceLandmarks?.length ? {m: measure(r, mainFaceIndex(r)), count: r.faceLandmarks.length} : null;
       this.diag.frames++; if (face) this.diag.faces++; this.diag.src = this.useVideoElement ? "video" : "track"; this.diag.size = [w, h];
       let det;
@@ -230,26 +308,60 @@ export class Vision extends EventTarget {
         const is = (d, name, min) => d.categories[0]?.categoryName === name && (d.categories[0]?.score || 0) >= min;
         const hit = o.detections.find(d => is(d, "cell phone", 0.38));
         // A person filling a good part of the frame = you're in your seat, even if your face is turned away.
-        const person = o.detections.some(d => is(d, "person", 0.4) && d.boundingBox.width * d.boundingBox.height > 0.08 * w * h);
-        det = {phone: hit ? {box: hit.boundingBox, cy: (hit.boundingBox.originY + hit.boundingBox.height / 2) / (h || 1)} : null, person};
+        const people = o.detections.filter(d => is(d, "person", 0.4) && d.boundingBox.width * d.boundingBox.height > 0.08 * w * h);
+        const you = people.sort((a, b) => b.boundingBox.width * b.boundingBox.height - a.boundingBox.width * a.boundingBox.height)[0];
+        det = {phone: hit ? {box: hit.boundingBox, cy: (hit.boundingBox.originY + hit.boundingBox.height / 2) / (h || 1)} : null,
+          person: !!you, top: you ? you.boundingBox.originY / (h || 1) : null};
       }
-      this.ingest(face, det);
+      let pose;
+      if (this.pose && this.wantPose(!!face)) {
+        try { pose = Vision.poseNose(this.pose.detectForVideo(source, t + 0.25), w, h); } catch { pose = undefined; }
+      }
+      this.ingest(face, det, pose);
       if (det !== undefined) this.draw(w, h);
     } finally {
       this.busy = false;
     }
   }
 
-  // One analysed frame. face: {m, count} or null. det: undefined (no phone check this frame), null (no phone), or {box, cy}.
-  ingest(face, det) {
+  async rebuildOnCpu(err) {
+    if (this._rebuilding || !this._mp) return;
+    console.warn("Vision kept failing, restarting the models on the CPU", err);
+    this._rebuilding = true;
+    const old = [this.face, this.obj, this.pose];
+    this.face = null; this.pose = null;
+    try {
+      const {FilesetResolver} = this._mp;
+      const {FaceLandmarker, ObjectDetector} = await import(`${MP}/vision_bundle.mjs`);
+      const fileset = await FilesetResolver.forVisionTasks(`${MP}/wasm`);
+      this._mp.fileset = fileset; cpuFallback = true;
+      const cpu = (Cls, path, extra) => Cls.createFromOptions(fileset, {baseOptions: {modelAssetPath: path, delegate: "CPU"}, runningMode: "VIDEO", ...extra});
+      this.obj = await cpu(ObjectDetector, OBJ_MODEL, {scoreThreshold: 0.3, maxResults: 5, categoryAllowlist: ["cell phone", "person"]});
+      this.face = await cpu(FaceLandmarker, FACE_MODEL, {numFaces: 3, outputFaceBlendshapes: true, outputFacialTransformationMatrixes: true,
+        minFaceDetectionConfidence: 0.3, minFacePresenceConfidence: 0.3, minTrackingConfidence: 0.3});
+      this.status({kind: "model", ok: true, backend: "cpu", rebuilt: true});
+      setTimeout(() => this.loadPose(), 2000);
+    } catch (e) {
+      console.error(e); this.failed = true; this.msg("The vision models stopped working. Turn the camera off and on again.");
+    }
+    for (const m of old) try { m?.close?.(); } catch {}
+    this.errors = 0; this._rebuilding = false;
+  }
+
+  // One analysed frame. face: {m, count} or null. det: undefined (no object check this frame) or {phone, person, top}.
+  // pose: undefined (pose model not run), null (nobody found) or {nose}.
+  ingest(face, det, pose) {
     const now = Date.now();
     this.hits.push(face ? 1 : 0); if (this.hits.length > 50) this.hits.shift();
     this.jawSlots.push(face ? face.m.jaw : null); if (this.jawSlots.length > 20) this.jawSlots.shift();
+    if (det) { this.top = det.top ?? null; this.topAt = det.top != null ? now : this.topAt; }
+    if (pose !== undefined) { this.poseNose = pose?.nose ?? null; this.poseAt = now; if (pose) this.poseSeenAt = now; }
     if (!face) {
       // A missed frame is the tracker's fault, not a pause in speech, so talking fades slowly. Turned far to the side
       // is exactly when the tracker loses you, so sideEMA isn't faded at all (sideAtLoss carries it).
       this.offEMA *= 0.9; this.talkEMA *= 0.97; this.yawnSince = 0;
       if (now - this.faceAt > 1500) this.closedSince = 0; // only forget closed eyes if the face is really gone
+      this.judgeLost(now);
     }
     else {
       const m = face.m;
@@ -257,14 +369,20 @@ export class Vision extends EventTarget {
       if (face.count > 1) this.othersAt = now;
       this.last = m; this.lastAt = now;
       this.recent.push(feat(m)); if (this.recent.length > 15) this.recent.shift();
+      this.learnDirection(m);
       this.trackTalking(m);
       this.trackGaze(m);
       this.trackExpression(m);
       this.trackEyes(m);
       // Eyes shut on most recent sightings (a blink is one frame, so it barely moves this).
-      this.closedEMA = (this.closedEMA || 0) * 0.7 + (m.blink > 0.55 ? 0.3 : 0);
+      this.closedEMA = (this.closedEMA || 0) * 0.7 + (this.lidsShut(m) ? 0.3 : 0);
       if (this.model) this.judge(m);
       this.learn(m);
+    }
+    // How you normally sit (body box top, nose above shoulders), sampled while your face is (just) seen in your work zone.
+    if (this.model && !this.frameDown && this.inWorkNow && now - this.faceAt < 600) {
+      if (det?.top != null) { this.topHist.push(det.top); if (this.topHist.length > 60) this.topHist.shift(); }
+      if (pose?.nose != null) { this.noseHist.push(pose.nose); if (this.noseHist.length > 40) this.noseHist.shift(); }
     }
     if (det === undefined) return;
     if (det.person) this.personAt = now;
@@ -285,28 +403,97 @@ export class Vision extends EventTarget {
     } else this.phoneBox = null;
   }
 
+  // Eyes shut. Looking down lowers the eyelids, which the blink score reads as half-closed, so a downward gaze needs
+  // a clearly higher score before it counts as closed.
+  lidsShut(m) { return m.blink > 0.55 + (m.eyeDown > 0.35 ? 0.2 : 0); }
+
+  // Which pitch sign is "down": pitch and the nose-to-chin ratio move together when the head tips, whatever the
+  // matrix convention. Decaying sums so a convention change (new camera) is followed.
+  learnDirection(m) {
+    const d = this.dirStats, k = 0.998;
+    for (const key of ["n", "sp", "sr", "spp", "srr", "spr"]) d[key] *= k;
+    d.n += 1; d.sp += m.pitch; d.sr += m.ratio; d.spp += m.pitch * m.pitch; d.srr += m.ratio * m.ratio; d.spr += m.pitch * m.ratio;
+    if (d.n < 40) return;
+    const cov = d.spr / d.n - (d.sp / d.n) * (d.sr / d.n);
+    const vp = d.spp / d.n - (d.sp / d.n) ** 2, vr = d.srr / d.n - (d.sr / d.n) ** 2;
+    const corr = cov / Math.sqrt(Math.max(1e-9, vp * vr));
+    if (Math.abs(corr) > 0.35) {
+      const dir = Math.sign(corr);
+      if (dir !== this.downDir) { this.downDir = dir; if (this.workBuf.length >= MIN_TO_JUDGE) this.model = buildModel(this.workBuf, this.phoneBuf, dir); }
+    }
+  }
+
+  // Degrees past the work zone in the "down" direction: over the zone's (capped) lower edge, and below its middle.
+  // null while the direction isn't known yet.
+  downBy(f) {
+    const M = this.model, dir = M?.downSign;
+    if (!dir) return null;
+    const pd = dir * f[0], med = dir * M.med[0], hi = dir > 0 ? M.max[0] : -M.min[0];
+    return {edge: pd - Math.min(hi, med + TUNE.zoneCap), mid: pd - med};
+  }
+
   // Add one sample per second to the work zone, unless something suggests you aren't working right now.
   learn(m) {
     const now = Date.now();
     if (now - this.lastLearn < LEARN_EVERY_MS) return;
     this.lastLearn = now;
+    const f = feat(m);
+    this.watchForCameraMove(m, f, now);
     // Samples wait 3 seconds before they count. If you turn out to be distracted in that time, they're thrown away,
-    // so the start of a phone check or a glance away never gets learned as "work".
-    const busyElsewhere = this.phoneSeenWithin(8000) || this.headDownEMA > 0.25 || this.offEMA > 0.3 || this.talkEMA > 0.5 || m.blink > 0.5;
+    // so the start of a phone check or a glance away never gets learned as "work". Postures past the zone's lower edge
+    // and taught exceptions (writing) are never learned either: they'd stretch the zone until looking down is normal.
+    const low = this.downBy(f), s = this.getSensitivity();
+    const busyElsewhere = this.phoneSeenWithin(8000) || this.headDownEMA > 0.25 || this.offEMA > 0.3 || this.talkEMA > 0.5 || m.blink > 0.5
+      || this.frameDown || (low && low.edge > TUNE.marginPitch / s) || (this.taught || []).some(t => dist(f, t) < 8 / s);
     if (busyElsewhere) this.pending = [];
-    else (this.pending ||= []).push({f: feat(m), ratio: m.ratio, t: now});
+    else (this.pending ||= []).push({f, ratio: m.ratio, cy: m.cy, size: m.size, t: now});
     while (this.pending?.length && now - this.pending[0].t >= 3000) {
-      const {f, ratio} = this.pending.shift();
-      this.workBuf.push({f, ratio});
+      const {f: pf, ratio, cy, size} = this.pending.shift();
+      this.workBuf.push({f: pf, ratio, cy, size});
       if (this.workBuf.length > WORK_BUF) this.workBuf.shift();
     }
     if (this.workBuf.length >= MIN_TO_JUDGE && (now - this.lastBuild > 5000 || !this.model)) {
       const first = !this.model;
-      this.model = buildModel(this.workBuf, this.phoneBuf);
+      this.model = buildModel(this.workBuf, this.phoneBuf, this.downDir);
       this.lastBuild = now;
       if (first) this.changed();
       if (first || now % 30000 < 5000) this.dispatchEvent(new Event("learned"));
     }
+  }
+
+  // Camera moved (laptop lid tilted, webcam bumped, chair moved): your whole pose shifts at once and stays shifted.
+  // A moved head shifts the face in the picture a little per degree; a tilted camera shifts it a lot per degree
+  // (the whole picture moves), and moving closer or further changes the face size. When most of the last ~25s sits
+  // outside the zone and the picture says "camera", the zone is moved over instead of slowly relearned.
+  watchForCameraMove(m, f, now) {
+    const M = this.model;
+    if (!M || M.cy == null || !M.size) return;
+    // Per sample: does the picture say "camera" (face far from its usual spot for the pose change, or a new size)?
+    const dp1 = f[0] - M.med[0], dcy1 = m.cy - M.cy, grow1 = m.size / M.size;
+    const cam = Math.abs(grow1 - 1) > 0.15 || Math.abs(dcy1) > Math.max(0.04, 0.012 * Math.abs(dp1));
+    this.moveHist.push({f, cy: m.cy, size: m.size, ratio: m.ratio, cam, up: Math.sign(dcy1)});
+    if (this.moveHist.length > 10) this.moveHist.shift();
+    const H = this.moveHist;
+    if (H.length < 10 || this.phoneSeenWithin(30000) || now - this.cameraMovedAt < 20000) return;
+    // Most of the last 10 seconds agree, in the same direction: a moved camera (a head that tips down and back up,
+    // or mixes of before and after, don't).
+    const C = H.filter(x => x.cam), dirs = C.reduce((a, x) => a + x.up, 0);
+    if (C.length < 8 || Math.abs(dirs) < C.length * 0.75) return;
+    const med = k => pct(C.map(k), 0.5);
+    const dp = med(x => x.f[0]) - M.med[0], yawMove = med(x => x.f[1]) - M.med[1];
+    // (Yaw sweeps across the screen, so a few seconds' median of it is noisy: only follow a big sideways move.)
+    const dyaw = Math.abs(yawMove) > Math.max(8, 0.5 * (M.max[1] - M.min[1])) ? yawMove : 0;
+    const dcy = med(x => x.cy) - M.cy, grow = med(x => x.size) / M.size;
+    const dr = med(x => x.ratio) - pct(this.workBuf.map(w => w.ratio), 0.5);
+    const shift = g => [g[0] + dp, g[1] + dyaw, g[2]];
+    this.workBuf = this.workBuf.map(w => ({f: shift(w.f), ratio: w.ratio + dr, cy: w.cy != null ? w.cy + dcy : null, size: w.size ? w.size * grow : w.size}));
+    this.phoneBuf = this.phoneBuf.map(shift);
+    this.taught = (this.taught || []).map(shift);
+    this.topHist = []; // the body box moved with the picture; relearn it
+    this.model = buildModel(this.workBuf, this.phoneBuf, this.downDir);
+    this.moveHist = []; this.pending = []; this.cameraMovedAt = now;
+    this.downEMA = 0; this.headDownEMA = 0; this.offEMA = 0; this.sideEMA = 0; this.downAtLoss = false; this.sideAtLoss = false;
+    this.dispatchEvent(new Event("learned"));
   }
 
   inWorkZone(m) {
@@ -317,17 +504,32 @@ export class Vision extends EventTarget {
 
   // Compare this frame to the learned work zone and phone pose.
   judge(m) {
-    const M = this.model, s = this.getSensitivity(), f = feat(m);
+    const M = this.model, s = this.getSensitivity(), f = feat(m), now = Date.now();
     const margin = [TUNE.marginPitch / s, TUNE.marginYaw / s, TUNE.marginEye / s];
     const inWork = f.every((v, k) => v >= M.min[k] - margin[k] && v <= M.max[k] + margin[k]);
+    this.inWorkNow = inWork;
     const nearestWork = Math.min(...M.work.map(x => dist(f, x)));
-    let phonePose;
+    const low = this.downBy(f);
+    let phonePose = false;
     if (M.phone) phonePose = !inWork && dist(f, M.phone) < nearestWork * TUNE.phoneNear;
-    else if (M.downSign) phonePose = (f[0] - (M.downSign > 0 ? M.max[0] : M.min[0])) * M.downSign > TUNE.downDeg / s;
-    else phonePose = (m.ratio - M.ratioMax) > TUNE.downRatio / s;
+    // Past the zone's lower edge, or far below its middle (always down, whatever the zone learned).
+    if (low) phonePose ||= low.edge > TUNE.downDeg / s || low.mid > TUNE.steepDeg / s;
+    else if (!M.phone) phonePose = (m.ratio - M.ratioMax) > TUNE.downRatio / s;
     // Postures you've marked "Not my phone" (writing, reading notes) are work, unless it's clearly your phone pose.
     // (Only while no phone has been seen for a minute, because writing and a phone in your lap can look alike.)
-    if (phonePose && !this.phoneSeenWithin(60000) && (this.taught || []).some(t => dist(f, t) < 8 / s) && !(M.phone && dist(f, M.phone) < 4)) phonePose = false;
+    // A taught posture covers the same head tilt across a page (writing moves the head sideways), but not a clearly
+    // deeper drop (head hanging below where you write).
+    const near = t => dist(f, t) < 8 / s || (Math.abs(f[0] - t[0]) < 8 / s && Math.abs(f[1] - t[1]) < 20 / s);
+    const covers = t => near(t) && !(low && low.mid - this.downBy(t).mid > 8);
+    if (phonePose && !this.phoneSeenWithin(60000) && (this.taught || []).some(covers) && !(M.phone && dist(f, M.phone) < 4)) phonePose = false;
+    this.frameDown = phonePose;
+    // Pitch trend: tipping down fast over the last second (the frames right before the tracker loses a face that
+    // turns away from the camera are mid-movement, so they'd never reach the threshold themselves).
+    if (low) {
+      this.pdHist.push({t: now, mid: low.mid}); while (this.pdHist.length && now - this.pdHist[0].t > 1200) this.pdHist.shift();
+      const first = this.pdHist[0];
+      this.trendDown = this.pdHist.length >= 2 && low.mid - first.mid > 10 && low.mid > 6;
+    }
     const eyesDown = !inWork && f[2] > M.max[2] + TUNE.eyeDown / s;
     // A close match to your learned phone pose specifically (used even in paper mode, where looking down is allowed).
     const phoneMatch = !!M.phone && !inWork && dist(f, M.phone) < Math.min(TUNE.matchDeg / s, nearestWork * 0.6);
@@ -341,8 +543,42 @@ export class Vision extends EventTarget {
     // you use a lot is inside the learned zone, so it never counts.
     const yawOut = Math.max(M.min[1] - margin[1] - f[1], f[1] - M.max[1] - margin[1]);
     this.sideEMA = this.sideEMA * 0.8 + (yawOut > TUNE.sideExtra / s && !phonePose ? 0.2 : 0);
-    this.downAtLoss = this.headDownEMA > 0.5;
+    this.downAtLoss = this.headDownEMA > 0.5 || this.trendDown;
     this.sideAtLoss = this.sideEMA > 0.5;
+  }
+
+  // How far the head has dropped from how you normally sit: {kind, drop} from the pose model (nose sinking toward the
+  // shoulders, preferred) or the top of the body box. null if neither is fresh or learned yet.
+  // Only readings taken after the face was last seen count (older ones describe the posture before it came back).
+  bodyDrop(now = Date.now()) {
+    if (this.poseNose != null && now - this.poseAt < 2200 && this.poseAt > this.faceAt && this.noseHist.length >= 5) return {kind: "pose", drop: pct(this.noseHist, 0.5) - this.poseNose};
+    if (this.top != null && now - this.topAt < 2600 && this.topAt > this.faceAt && this.topHist.length >= 8) return {kind: "top", drop: this.top - pct(this.topHist, 0.5)};
+    return null;
+  }
+  // Body says the head has dropped (true), is up where it normally is (false), or can't tell (null).
+  bodyDown(now = Date.now()) {
+    const b = this.bodyDrop(now);
+    if (!b) return null;
+    const lim = b.kind === "pose" ? TUNE.poseDrop : TUNE.topDrop;
+    if (b.drop < lim * 0.4) return false;
+    if (b.drop <= lim) return null;
+    // A drop you've marked as work (writing with the face out of view) stays work while no phone is around.
+    if (!this.phoneSeenWithin(60000) && (this.taughtBody || []).some(t => t.kind === b.kind && b.drop - t.drop < lim * 0.3 && t.drop - b.drop < lim)) return false;
+    return true;
+  }
+
+  // A frame without a face. Losing the face right after tipping down, or with the body showing a dropped head, is
+  // itself evidence of looking down, so the head-down score keeps building instead of freezing.
+  judgeLost(now) {
+    if (!this.model) return;
+    const body = this.bodyDown(now);
+    // (One stray down frame before a missed frame isn't enough: it needs a run of them, or the head tipping fast.)
+    const justDown = now - this.faceAt < 1500 && (this.trendDown || (this.frameDown && this.headDownEMA > 0.35));
+    if (body === true || (body === null && justDown)) {
+      this.headDownEMA = this.headDownEMA * 0.8 + 0.2; this.downEMA = this.downEMA * 0.8 + 0.2;
+    } else if (body === false) { this.headDownEMA *= 0.8; this.downEMA *= 0.8; }
+    if (body === true || justDown) this.downAtLoss = true;
+    else if (body === false) this.downAtLoss = false;
   }
 
   // Eyes jumping around (reading, scanning a page) vs. a still, empty stare. Spread of gaze over ~3s.
@@ -400,7 +636,11 @@ export class Vision extends EventTarget {
   trackEyes(m) {
     const now = Date.now();
     // Eyes closed: blink score stays high (a normal blink lasts well under half a second).
-    if (m.blink > 0.55) this.closedSince ||= now; else this.closedSince = 0;
+    const shut = this.lidsShut(m);
+    if (shut) this.closedSince ||= now; else this.closedSince = 0;
+    // PERCLOS: share of the last minute's sightings with the eyes shut (the standard drowsiness measure; above ~15%
+    // means drowsy). Used to call "sleepy" sooner when someone keeps nodding off.
+    this.closedHist.push(shut ? 1 : 0); if (this.closedHist.length > 300) this.closedHist.shift();
     // Yawn: jaw wide open for over a second.
     if (m.jaw > 0.55) {
       this.yawnSince ||= now;
@@ -429,7 +669,11 @@ export class Vision extends EventTarget {
       const mid = [0, 1, 2].map(k => pct(this.recent.map(f => f[k]), 0.5));
       (this.taught ||= []).push(mid); if (this.taught.length > 12) this.taught.shift();
     }
+    // Face gone (camera above you while you write): remember how far the head dropped, so that drop is an exception too.
+    const drop = this.bodyDrop();
+    if (!this.faceVisible && drop) { (this.taughtBody ||= []).push(drop); if (this.taughtBody.length > 6) this.taughtBody.shift(); }
     this.downEMA = 0; this.headDownEMA = 0; this.offEMA = 0; this.sideEMA = 0; this.downAtLoss = false; this.sideAtLoss = false;
+    this.frameDown = false; this.trendDown = false; this.pdHist = [];
     this.dispatchEvent(new Event("learned"));
   }
 
@@ -447,7 +691,7 @@ export class Vision extends EventTarget {
   get learning() { return this.ready && !this.model; }
   get faceVisible() { return Date.now() - this.faceAt < 1500; }
   // Someone is in the seat: face seen recently, or a person seen by the object detector (checked ~every 1.2s).
-  get lastSeenAt() { return Math.max(this.faceAt || 0, this.personAt || 0); }
+  get lastSeenAt() { return Math.max(this.faceAt || 0, this.personAt || 0, this.poseSeenAt || 0); }
   get present() { return this.faceVisible || Date.now() - (this.personAt || 0) < 3000; }
   get phoneVisible() { return Date.now() - this.phoneAt < 3000; }
   phoneSeenWithin(ms) { return Date.now() - this.phoneAt < ms; }
@@ -462,7 +706,21 @@ export class Vision extends EventTarget {
     // The person detector misses a slumped body now and then, so "still here" gets a few seconds of slack.
     if (this.hits.length < 50 || Date.now() - this.lastSeenAt > 6000 || this.phoneSeenWithin(20000)) return false;
     const rate = n => this.hits.slice(-n).reduce((a, b) => a + b, 0) / n;
-    return (this.closedEMA > 0.5 && rate(25) < TUNE.deskHits) || (this.downAtLoss && rate(50) < TUNE.deskHits / 3);
+    // Only after eyes shut: an open-eyed head drop is someone looking down (lap, floor), not asleep.
+    return this.closedEMA > 0.5 && rate(25) < TUNE.deskHits;
+  }
+  // Share of the last minute's face sightings with the eyes shut (needs ~20s of sightings).
+  get perclos() { const h = this.closedHist; return h.length < 100 ? 0 : h.reduce((a, b) => a + b, 0) / h.length; }
+  // Head down right now, with or without a face (for the status chip).
+  get headDown() { return this.faceVisible ? this.headDownEMA > 0.6 : this.downWhileLost; }
+  // Face lost while looking down: the body still shows a dropped head, or it was tipping down when the face went
+  // and nothing says it came back up. Needs someone in the chair (a recent face, body box or pose).
+  get downWhileLost() {
+    if (this.faceVisible || Date.now() - this.lastSeenAt > 6000) return false;
+    const body = this.bodyDown(), gone = Date.now() - this.faceAt;
+    if (body === false) return false;
+    if (body === true) return gone < 180000;
+    return this.downAtLoss && gone < TUNE.lossHoldMs;
   }
   // Last sightings had the eyes shut and the face has dropped out since (dozing off, not looking down at something).
   get eyesShutAtLoss() { return !this.faceVisible && this.closedEMA > 0.5; }

@@ -11,7 +11,8 @@ export const TUNE = {calibratedDown: 6, zoneSec: 8, sleepySec: 4, awaySec: 12,
   talkHold: 12,   // a conversation keeps counting this long after you last spoke, while you're turned to them / they're here
   chatCushion: 10, // talk time can build this far past chatSec, so short pauses don't end "Chatting"
   turnChat: 1,    // talking while turned to someone becomes "chat" after sideSec * turnChat (facing the screen waits chatSec)
-  deskSec: 5};    // seconds of vision.headOnDesk before it counts as sleeping on the desk
+  deskSec: 5,     // seconds of vision.headOnDesk before it counts as sleeping on the desk
+  perclos: 0.15}; // share of the last minute with eyes shut that marks someone as drowsy (NHTSA PERCLOS, 15%)
 
 export const DISTRACTED = ["phone", "chat", "down", "sleepy", "zoned"];   // count against your focus score
 
@@ -21,10 +22,11 @@ export function updateCounters(live, vision, onBreak) {
   const fresh = vision.faceVisible;
   const goneFor = fresh ? 0 : Date.now() - vision.faceAt;
   // Head tilted toward your phone pose counts; eyes-only glances count only right after a phone was seen.
-  // If your face drops out of view while you're looking down (common with a phone in your lap), keep counting.
+  // If your face drops out of view while you're looking down (lap, floor, a camera above you), keep counting while
+  // the body still shows a dropped head (vision.downWhileLost).
   const lookingDown = fresh
     ? vision.headDownEMA > 0.6 || (vision.downEMA > 0.6 && vision.phoneSeenWithin(20000))
-    : vision.downAtLoss && goneFor < 8000;
+    : vision.downWhileLost ?? (vision.downAtLoss && goneFor < 8000);
   // Asleep on the desk also looks like a dropped head; it's handled as sleepy, not as a phone check.
   const desk = vision.headOnDesk;
   live.deskSec = desk ? (live.deskSec || 0) + 1 : 0;
@@ -61,7 +63,7 @@ export function candidates(live, vision, settings, collab) {
   const eyesShut = vision.eyesClosedMs > 1500 || vision.eyesShutAtLoss;   // a drooping head with closed eyes is dozing, not phone use
   if (vision.phoneInUse) c.push(["phone", 2, "Phone in your hand"]);
   else if (vision.onCall && !grace) c.push(["phone", 2, "On a phone call"]);
-  if (goneFor > 8000 && goneFor < 60000 && !paper && !grace && vision.downAtLoss && vision.phoneSeenWithin(20000)) c.push(["phone", 1.5, "Phone out of view"]);
+  if (goneFor > 8000 && goneFor < 60000 && !paper && !grace && (vision.downWhileLost ?? vision.downAtLoss) && vision.phoneSeenWithin(20000)) c.push(["phone", 1.5, "Phone out of view"]);
   // Paper mode ignores looking down, but a close match to your own phone posture still counts (a bit slower).
   if (paper && !grace && !eyesShut && (live.matchSec || 0) >= downNeeded * 1.5) c.push(["phone", 1.2, "Looks like your phone posture"]);
   if (vision.model) {
@@ -74,8 +76,9 @@ export function candidates(live, vision, settings, collab) {
     if ((live.sideSec || 0) > 0 && quiet) c.push(["zoned", live.sideSec / TUNE.sideSec, `Looking away for ${live.sideSec}s`]);
     if (live.offSec > 0 && quiet) c.push(["zoned", live.offSec / TUNE.zoneSec, `Zoned out for ${live.offSec}s`]);
   }
-  const closed = vision.eyesClosedMs / 1000;
-  if (closed > 0.8) c.push(["sleepy", closed / TUNE.sleepySec, `Eyes closed for ${Math.round(closed)}s`]);
+  // Eyes shut for a while. Someone who keeps nodding off (PERCLOS over 15% of the last minute) is called sooner.
+  const closed = vision.eyesClosedMs / 1000, drowsy = (vision.perclos || 0) > TUNE.perclos;
+  if (closed > 0.8) c.push(["sleepy", closed / (TUNE.sleepySec * (drowsy ? 0.6 : 1)), `Eyes closed for ${Math.round(closed)}s`]);
   // Head down on the desk: the face is (almost) gone after eyes shut or the head dropped, but your body is still here.
   if (live.deskSec > 0) c.push(["sleepy", live.deskSec / TUNE.deskSec, "Head down on the desk"]);
   live.chatCap = settings.chatSec + TUNE.chatCushion;

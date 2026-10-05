@@ -18,14 +18,14 @@
 <meta property="og:url" content="https://calebsamuel1026-blip.github.io/lockedin/">
 <meta property="og:title" content="lockedin: the focus timer that catches you on your phone">
 <meta property="og:description" content="Lock in. A free focus timer that notices your phone, keeps your streak, and runs privately on your device.">
-<meta property="og:image" content="https://calebsamuel1026-blip.github.io/lockedin/icon-512.png">
-<meta property="og:image:width" content="512">
-<meta property="og:image:height" content="512">
-<meta property="og:image:alt" content="lockedin logo">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://calebsamuel1026-blip.github.io/lockedin/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="lockedin: the free focus timer that catches you on your phone">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="lockedin: the focus timer that catches you on your phone">
 <meta name="twitter:description" content="Lock in. A free focus timer that notices your phone, keeps your streak, and runs privately on your device.">
-<meta name="twitter:image" content="https://calebsamuel1026-blip.github.io/lockedin/icon-512.png">
+<meta name="twitter:image" content="https://calebsamuel1026-blip.github.io/lockedin/og.png">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -48,7 +48,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=Plus+Jakarta+Sans:wght@500..800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="no-goals">
 <a class="skip" href="#main">Skip to content</a>
 <div class="wallpaper" id="wallpaper" aria-hidden="true"><i></i><i></i><i></i></div>
 <div class="toasts" id="toasts" aria-hidden="true"></div>
@@ -60,13 +60,12 @@
   </a>
   <nav class="tabs" aria-label="Sections">
     <a href="#focus" data-view="focus">Focus</a>
-    <a href="#goals" data-view="goals">Goals</a>
     <a href="#insights" data-view="insights">Insights<span class="badge hidden" id="insightsBadge"><span class="sr-only">New weekly report</span></span></a>
     <a href="#history" data-view="history">History</a>
   </nav>
   <div class="nav-actions">
-    <button class="chip-btn streak-chip" id="streakBtn" title="Your streak: lock in 25 minutes a day to keep it" aria-label="Day streak"><span aria-hidden="true">🔥</span><b id="streakTop">0</b></button>
-    <button class="chip-btn keys-chip" id="keysBtn" title="Your keys. Open the shop" aria-label="Keys and shop"><span aria-hidden="true">🔑</span><b id="keysNum">0</b></button>
+    <button class="chip-btn streak-chip" id="streakBtn" title="Your streak. Lock in 25 minutes a day to keep it" aria-label="Streak: 0 days"><span aria-hidden="true">🔥</span><b id="streakTop" aria-hidden="true">0</b></button>
+    <button class="chip-btn keys-chip" id="keysBtn" title="Your keys. Open the shop" aria-label="0 keys. Open the shop"><span aria-hidden="true">🔑</span><b id="keysNum" aria-hidden="true">0</b></button>
     <button class="round-btn" id="pipBtn" title="Pop out mini timer (P)" aria-label="Pop out mini timer" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><rect x="12" y="11.5" width="6.5" height="5" rx="1.2" class="fill"/></svg>
     </button>
@@ -97,7 +96,7 @@
 
 <main id="main" tabindex="-1">
 <!-- ================= FOCUS ================= -->
-<section class="view" id="v-focus" aria-labelledby="focusTitle">
+<section class="view on" id="v-focus" aria-labelledby="focusTitle">
   <div class="focus-layout">
     <div class="hero">
       <h1 class="sr-only" id="focusTitle">Focus</h1>
@@ -120,17 +119,19 @@
       </div>
 
       <div id="preStart" class="hero-controls">
+        <button class="cta" id="startBtn"><span class="cta-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg></span>Lock in</button>
         <div class="places" role="group" aria-labelledby="placesLbl">
           <span class="caption" id="placesLbl">Where are you working?</span>
           <div class="chips" id="placeChips"></div>
         </div>
-        <button class="chip toggle" id="pomoBtn" aria-pressed="false" title="25 minutes focus, 5 minute break, long break every 4"><span aria-hidden="true">🍅</span> <span class="lbl">Pomodoro</span></button>
-        <button class="chip toggle" id="collabBtn" aria-pressed="false" title="Talking counts as focus when you're working with others"><span aria-hidden="true">👥</span> <span class="lbl">Group work</span></button>
-        <button class="cta" id="startBtn"><span class="cta-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg></span>Lock in</button>
+        <div class="chips opts" role="group" aria-label="Session options">
+          <button class="chip toggle" id="pomoBtn" aria-pressed="false" title="25 minutes focus, 5 minute break, long break every 4"><span aria-hidden="true">🍅</span> <span class="lbl">Pomodoro</span></button>
+          <button class="chip toggle" id="collabBtn" aria-pressed="false" title="Talking counts as focus when you're working with others"><span aria-hidden="true">👥</span> <span class="lbl">Group work</span></button>
+        </div>
         <details class="earlier">
-          <summary>Already been working?</summary>
+          <summary>Started earlier? Add time</summary>
           <div class="earlier-row">
-            <label for="preMin">Minutes already worked</label>
+            <label for="preMin">Minutes you already worked</label>
             <input type="number" id="preMin" min="0" max="720" step="5" value="0" inputmode="numeric">
           </div>
         </details>
@@ -142,14 +143,16 @@
           <button class="ghost-btn" id="breakBtn"><span class="lbl">Break</span></button>
         </div>
         <div class="text-actions">
-          <button class="link-btn" id="editBtn" aria-expanded="false" aria-controls="editRow">Edit time</button>
+          <button class="link-btn" id="editBtn" aria-expanded="false" aria-controls="editRow">Fix the time</button>
           <span aria-hidden="true">·</span>
           <button class="link-btn danger" id="endBtn">End session</button>
         </div>
-        <button class="chip toggle" id="pomoBtnRun" aria-pressed="false" title="25 minutes focus, 5 minute break, long break every 4"><span aria-hidden="true">🍅</span> <span class="lbl">Pomodoro</span></button>
-        <button class="chip toggle" id="collabBtnRun" aria-pressed="false" title="Talking counts as focus when you're working with others"><span aria-hidden="true">👥</span> <span class="lbl">Group work</span></button>
+        <div class="chips opts" role="group" aria-label="Session options">
+          <button class="chip toggle" id="pomoBtnRun" aria-pressed="false" title="25 minutes focus, 5 minute break, long break every 4"><span aria-hidden="true">🍅</span> <span class="lbl">Pomodoro</span></button>
+          <button class="chip toggle" id="collabBtnRun" aria-pressed="false" title="Talking counts as focus when you're working with others"><span aria-hidden="true">👥</span> <span class="lbl">Group work</span></button>
+        </div>
         <div id="editRow" class="edit-row hidden">
-          <label for="editH">Total</label>
+          <label for="editH">Session time</label>
           <input type="number" id="editH" min="0" max="23" inputmode="numeric" aria-label="Hours"><span>h</span>
           <input type="number" id="editM" min="0" max="59" inputmode="numeric" aria-label="Minutes"><span>m</span>
           <button class="pill filled sm" id="editSave">Save</button>
@@ -162,7 +165,7 @@
 
     <div class="stack">
       <article class="card today-card">
-        <header class="card-title"><h2>Today</h2><span class="streak" id="streakBadge" title="Days in a row you hit your daily goal"><span aria-hidden="true">🔥</span> <b id="streakNum">0</b><span class="sr-only"> day streak</span></span></header>
+        <header class="card-title"><h2>Today</h2><span class="streak" id="streakBadge" title="Days in a row with at least 25 minutes locked in"><span aria-hidden="true">🔥</span> <b id="streakNum">0</b><span class="sr-only"> day streak</span></span></header>
         <div class="meters" id="ringsSvg" role="group" aria-label="Today's progress">
           <div class="meter m-hours"><div class="m-top"><span>Hours</span><b id="lgHours">0/3h</b></div><div class="m-track"><i id="rHours"></i></div></div>
           <div class="meter m-focus"><div class="m-top"><span>Focus</span><b id="lgFocus">--</b></div><div class="m-track"><i id="rFocus"></i></div></div>
@@ -178,7 +181,7 @@
         <a href="#goals" class="pill tinted sm" id="planCta">Plan today</a>
       </article>
 
-      <article class="card">
+      <article class="card session-card" id="sessionCard">
         <header class="card-title"><h2>This session</h2><span class="caption" id="placeTag"></span></header>
         <div class="session-stats">
           <div class="score-ring" id="scoreRing" role="img" aria-label="Focus score not available yet"><span id="scoreTxt">--</span><small>focus</small></div>
@@ -192,7 +195,7 @@
           </dl>
         </div>
         <div class="timeline" id="timeline" role="img" aria-label="Session timeline"></div>
-        <div class="legend" aria-hidden="true"><span><i class="c-focused"></i>Focused</span><span><i class="c-phone"></i>Phone</span><span><i class="c-away"></i>Away</span><span><i class="c-break"></i>Break</span><span><i class="c-chat"></i>Chatting</span><span><i class="c-down"></i>Head down</span><span><i class="c-sleepy"></i>Eyes closed</span><span><i class="c-zoned"></i>Zoned out</span></div>
+        <div class="legend" id="tlLegend" aria-hidden="true"><span><i class="c-focused"></i>Focused</span><span><i class="c-phone"></i>Phone</span><span><i class="c-away"></i>Away</span><span><i class="c-break"></i>Break</span><span><i class="c-chat"></i>Chatting</span><span><i class="c-down"></i>Head down</span><span><i class="c-sleepy"></i>Eyes closed</span><span><i class="c-zoned"></i>Zoned out</span></div>
         <span class="sr-only" id="best"></span>
         <span class="sr-only" id="stBreak"></span>
       </article>
@@ -204,7 +207,7 @@
           <canvas id="overlay" aria-hidden="true"></canvas>
           <div class="cam-off" id="camOff">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8a2 2 0 0 1 2-2h2l1.5-2h7L17 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="12.5" r="3.5"/></svg>
-            <p>Turn on the camera and lockedin will notice when you pick up your phone.</p>
+            <p>Turn on the camera and lockedin will notice when you pick up your phone. It's optional.</p>
           </div>
           <div class="cam-orb" aria-hidden="true"><span class="orb"></span><p id="orbText">Watching for your phone</p></div>
           <div class="cam-msg hidden" id="camMsg" role="status"></div>
@@ -268,6 +271,7 @@
         <button id="wkNext" aria-label="Next week">›</button>
       </div>
     </header>
+    <article class="card empty-card hidden" id="insEmpty"><b>No sessions this week yet</b><p class="secondary">Finish a session and your weekly report fills in here.</p><a class="pill filled sm" href="#focus">Start a session</a></article>
     <div class="kpis" id="wkKpis"></div>
     <button class="wrapped-cta" id="wrappedBtn"><span aria-hidden="true">▶</span> Your week, wrapped</button>
     <article class="card" id="coachCard">
@@ -318,7 +322,7 @@
 <div class="sr-only" aria-live="polite" id="politeLive"></div>
 <div class="sr-only" aria-live="assertive" id="assertLive"></div>
 
-<dialog class="alert" id="alert" aria-labelledby="alertTitle" aria-describedby="alertMsg">
+<dialog class="alert" id="alert" role="alertdialog" aria-labelledby="alertTitle" aria-describedby="alertMsg">
   <div class="alert-card">
     <div class="alert-glyph" id="alertGlyph" aria-hidden="true">📵</div>
     <h2 id="alertTitle">Phone down</h2>
@@ -333,28 +337,22 @@
   <h2 id="sumTitle">Session complete</h2>
   <div id="summaryBody"></div>
   <div id="sumClips"></div>
-  <div class="sheet-actions"><button class="pill filled" data-close>Done</button></div>
+  <div class="sum-acct hidden" id="sumAcct"><p><b>Keep your streak safe.</b> A free account saves your keys and history on every device.</p><button type="button" class="pill tinted sm" data-open-account>Create free account</button></div>
+  <div class="sheet-actions"><button class="pill filled" data-close autofocus>Done</button></div>
 </dialog>
 
 <dialog id="onboardDlg" class="sheet onboard" aria-labelledby="obTitle">
   <div class="ob-step" data-step="0">
-    <img class="ob-icon" src="icon.svg" alt="" width="96" height="96">
+    <img class="ob-icon" src="icon.svg" alt="" width="88" height="88">
     <h2 id="obTitle" tabindex="-1">Welcome to lockedin</h2>
     <p class="secondary">The focus timer you leave running while you work.</p>
     <p class="invite-note hidden" data-invite-note></p>
     <ul class="features">
-      <li><span class="f-ic" style="--c:#ff2d55">◷</span><div><b>Track your time</b><span>Hit Lock in, then work in any other tab or app.</span></div></li>
-      <li><span class="f-ic" style="--c:#30d158">◉</span><div><b>Catch your phone</b><span>The camera notices your phone, dozing off, and zoning out, and nudges you back. No setup needed.</span></div></li>
-      <li><span class="f-ic" style="--c:#5ac8fa">✓</span><div><b>Plan and review</b><span>Set goals for the day and see when you focus best.</span></div></li>
+      <li><span class="f-ic" style="--c:#c6ff3d" aria-hidden="true">◷</span><div><b>Hit Lock in and get to work</b><span>It keeps counting in the background, in any tab or app.</span></div></li>
+      <li><span class="f-ic" style="--c:#30d158" aria-hidden="true">◉</span><div><b>Catch your phone</b><span>The optional camera notices your phone, dozing off and zoning out, then nudges you back.</span></div></li>
+      <li><span class="f-ic" style="--c:#5ac8fa" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><div><b>Private by design</b><span>The camera check runs on your device. Video is never uploaded or saved.</span></div></li>
     </ul>
-    <div class="sheet-actions stacked"><button class="pill filled lg" data-next>Continue</button></div>
-  </div>
-  <div class="ob-step hidden" data-step="1">
-    <div class="ob-icon glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
-    <h2 tabindex="-1">Private by design</h2>
-    <p class="secondary">The phone check runs entirely on your device. No video or photo ever leaves your computer, and nothing is recorded. The camera is optional, and the timer works without it.</p>
-    <p class="secondary small">There's no setup. lockedin learns how you sit during your first few seconds and keeps adjusting as you work.</p>
-    <div class="sheet-actions stacked"><button class="pill filled lg" id="obDone">Get started</button><button class="pill plain" data-back>Back</button></div>
+    <div class="sheet-actions stacked"><button class="pill filled lg" id="obDone">Get started</button></div>
   </div>
 </dialog>
 
@@ -379,7 +377,7 @@
       <div><dt><kbd>?</kbd></dt><dd>Help</dd></div>
     </dl>
     <h3>Your data</h3>
-    <p>Everything stays in this browser unless you create an account, which syncs your progress (keys, streak, settings and session numbers) so it follows you to other devices. Camera video, photos and clips never leave your device. Usage analytics are only sent if you allow them. Read the <a href="privacy.html">privacy policy</a>.</p>
+    <p>Everything stays in this browser unless you make an account, which syncs your progress (keys, streak, settings and session numbers) so it follows you to other devices. Camera video, photos and clips never leave your device. Usage analytics are only sent if you allow them. Read the <a href="privacy.html">privacy policy</a>.</p>
   </div>
   <div class="sheet-actions"><button class="pill plain" id="replayOnboard">Show intro</button><button class="pill filled" data-close>Done</button></div>
 </dialog>
@@ -392,58 +390,69 @@
       <button type="submit" class="link-btn strong" id="saveSettings">Save</button>
     </div>
 
-    <p class="group-label">Goals</p>
+    <p class="group-label">Daily target</p>
     <div class="form-group">
       <div class="form-row"><label for="s_dailyGoalH">Hours per day</label><input type="number" id="s_dailyGoalH" min="0.5" max="16" step="0.5"></div>
       <div class="form-row"><label for="s_weeklyGoalH">Hours per week</label><input type="number" id="s_weeklyGoalH" min="1" max="100" step="1"></div>
       <div class="form-row"><label for="s_weekStart">Week starts on</label><select id="s_weekStart"><option value="1">Monday</option><option value="0">Sunday</option><option value="6">Saturday</option></select></div>
     </div>
 
-    <p class="group-label">Focus blocks</p>
+    <p class="group-label">Breaks</p>
     <div class="form-group">
-      <div class="form-row"><label for="s_focusBlockMin">Focus minutes before a break</label><input type="number" id="s_focusBlockMin" min="0" max="240"></div>
-      <div class="form-row"><label for="s_breakMin">Break minutes</label><input type="number" id="s_breakMin" min="1" max="60"></div>
+      <div class="form-row"><label for="s_focusBlockMin">Remind me to take a break after (minutes)</label><input type="number" id="s_focusBlockMin" min="0" max="240"></div>
+      <div class="form-row"><label for="s_breakMin">Break length (minutes)</label><input type="number" id="s_breakMin" min="1" max="60"></div>
     </div>
-    <p class="group-foot">Set focus minutes to 0 to turn break reminders off.</p>
+    <p class="group-foot">Set the reminder to 0 to turn it off.</p>
 
-    <p class="group-label">Phone catcher</p>
+    <p class="group-label">Camera</p>
     <div class="form-group">
-      <div class="form-row"><label for="s_autoCamera">Turn on camera when I start</label><input type="checkbox" class="switch" id="s_autoCamera"></div>
+      <div class="form-row"><label for="s_autoCamera">Turn on the camera when I lock in</label><input type="checkbox" class="switch" id="s_autoCamera"></div>
       <div class="form-row"><label for="s_paperMode">Paper mode</label><input type="checkbox" class="switch" id="s_paperMode"></div>
       <div class="form-row"><label for="s_chatDetect">Notice when I'm chatting</label><input type="checkbox" class="switch" id="s_chatDetect"></div>
       <div class="form-row"><label for="s_collabDefault">Group work by default</label><input type="checkbox" class="switch" id="s_collabDefault"></div>
-      <div class="form-row"><label for="s_chatSec">Talking counts as chatting after (seconds)</label><input type="number" id="s_chatSec" min="5" max="300"></div>
-      <div class="form-row"><label for="s_sensitivity">Sensitivity</label><select id="s_sensitivity"><option value="0.7">Relaxed</option><option value="1">Normal</option><option value="1.4">Strict</option></select></div>
-      <div class="form-row"><label for="s_phoneAlertSec">Alert after (seconds on phone)</label><input type="number" id="s_phoneAlertSec" min="3" max="300"></div>
-      <div class="form-row"><button type="button" class="link-btn" id="forgetBtn">Re-learn my setup</button></div>
-      <div class="form-row"><label for="s_downSec">Head down counts after (seconds)</label><input type="number" id="s_downSec" min="2" max="60"></div>
     </div>
-    <p class="group-foot">Paper mode ignores looking down, so only a visible phone counts. Good for writing or reading on your desk. Chatting is noticed from mouth movement only; the microphone is never used. Turn on group work for study groups or team projects so talking counts as focus.</p>
+    <p class="group-foot">Paper mode ignores looking down, so only a phone you can see counts. Chatting is spotted from mouth movement; the microphone is never used. Group work lets talking count as focus.</p>
 
-    <p class="group-label">Alerts</p>
+    <p class="group-label">Sounds and alerts</p>
     <div class="form-group">
-      <div class="form-row"><label for="s_sound">Sound</label><input type="checkbox" class="switch" id="s_sound"></div>
-      <div class="form-row"><label for="s_phoneRepeat">Keep beeping while I'm on my phone</label><input type="checkbox" class="switch" id="s_phoneRepeat"></div>
-      <div class="form-row"><label for="s_downSound">Nudge sound when my head is down</label><input type="checkbox" class="switch" id="s_downSound"></div>
-      <div class="form-row"><label for="s_volume">Volume</label><input type="range" id="s_volume" min="0" max="1" step="0.1"></div>
-      <div class="form-row"><label for="s_notify">Notifications</label><input type="checkbox" class="switch" id="s_notify"></div>
+      <div class="form-row"><label for="s_sound">Sounds</label><input type="checkbox" class="switch" id="s_sound"></div>
       <div class="form-row"><label for="s_alertSound">Alarm sound</label><select id="s_alertSound">
         <option value="classic">Classic beep</option><option value="horn">Air horn</option><option value="siren">Siren</option>
         <option value="bruh">Bruh</option><option value="chime">Gentle chime</option><option value="custom">My own sound</option></select></div>
-      <div class="form-row"><span class="row-actions"><button type="button" class="pill tinted sm" id="testSound">▶ Test</button><button type="button" class="pill tinted sm" id="uploadSound">Upload my sound</button></span><span class="caption" id="soundName"></span></div>
-      <div class="form-row stacked"><label for="s_alertText">Phone alert message</label><input type="text" id="s_alertText" maxlength="40" placeholder="Phone down"></div>
+      <div class="form-row"><span class="row-actions"><button type="button" class="pill tinted sm" id="testSound">▶ Play</button><button type="button" class="pill tinted sm" id="uploadSound">Upload a sound</button></span><span class="caption" id="soundName"></span></div>
       <input type="file" id="soundUpload" accept="audio/*" class="sr-only" tabindex="-1" aria-label="Choose an alarm sound">
+      <div class="form-row"><label for="s_volume">Volume</label><input type="range" id="s_volume" min="0" max="1" step="0.1"></div>
+      <div class="form-row"><label for="s_phoneRepeat">Keep beeping while I'm on my phone</label><input type="checkbox" class="switch" id="s_phoneRepeat"></div>
+      <div class="form-row"><label for="s_downSound">Soft nudge when my head is down</label><input type="checkbox" class="switch" id="s_downSound"></div>
+      <div class="form-row stacked"><label for="s_alertText">Phone alert title</label><input type="text" id="s_alertText" maxlength="40" placeholder="Phone down"></div>
+      <div class="form-row"><label for="s_notify">Notifications</label><input type="checkbox" class="switch" id="s_notify"></div>
       <div class="form-row"><label for="s_titleAlerts">Flash the tab title</label><input type="checkbox" class="switch" id="s_titleAlerts"></div>
-      <div class="form-row"><label for="s_drainKeys">Lose keys when distracted</label><input type="checkbox" class="switch" id="s_drainKeys"></div>
+    </div>
+
+    <p class="group-label">Keys</p>
+    <div class="form-group">
+      <div class="form-row"><label for="s_drainKeys">Lose keys when I'm distracted</label><input type="checkbox" class="switch" id="s_drainKeys"></div>
     </div>
 
     <p class="group-label">General</p>
     <div class="form-group">
       <div class="form-row"><label for="s_theme">Appearance</label><select id="s_theme"><option value="system">Automatic</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
       <div class="form-row"><label for="s_shortcuts">Keyboard shortcuts</label><input type="checkbox" class="switch" id="s_shortcuts"></div>
-      <div class="form-row stacked"><label for="s_places">Places</label><input type="text" id="s_places" maxlength="200" placeholder="Library, Home, Café"></div>
+      <div class="form-row stacked"><label for="s_places">Places</label><input type="text" id="s_places" maxlength="200" placeholder="Library, Home, Café" aria-describedby="placesHint"></div>
     </div>
-    <p class="group-foot">Places are the quick tags you pick before starting, separated by commas.</p>
+    <p class="group-foot" id="placesHint">The quick tags you pick before you start, separated by commas.</p>
+
+    <details class="advanced">
+      <summary class="group-label">Fine-tune the camera</summary>
+      <div class="form-group">
+        <div class="form-row"><label for="s_sensitivity">Sensitivity</label><select id="s_sensitivity"><option value="0.7">Relaxed</option><option value="1">Normal</option><option value="1.4">Strict</option></select></div>
+        <div class="form-row"><label for="s_phoneAlertSec">Phone alert after (seconds)</label><input type="number" id="s_phoneAlertSec" min="3" max="300"></div>
+        <div class="form-row"><label for="s_downSec">Head down counts after (seconds)</label><input type="number" id="s_downSec" min="2" max="60"></div>
+        <div class="form-row"><label for="s_chatSec">Chatting counts after (seconds)</label><input type="number" id="s_chatSec" min="5" max="300"></div>
+        <div class="form-row"><span>Wrong too often?</span><button type="button" class="pill tinted sm" id="forgetBtn">Re-learn my setup</button></div>
+      </div>
+      <p class="group-foot">Most people never need these. Tapping "Not right? I'm focused" during a session also teaches lockedin.</p>
+    </details>
 
     <p class="group-label">Account &amp; privacy</p>
     <div class="form-group">
@@ -451,7 +460,7 @@
       <div class="form-row"><label for="s_analytics">Share usage analytics</label><input type="checkbox" class="switch" id="s_analytics"></div>
       <div class="form-row"><a href="privacy.html">Privacy policy</a><a href="terms.html">Terms</a></div>
     </div>
-    <p class="group-foot">Analytics are counts like "a session ended", never your camera or anything you type. This switch applies right away.</p>
+    <p class="group-foot">Analytics are counts like "a session ended", never your camera or anything you type. This switch works right away.</p>
 
     <div class="form-group">
       <button type="button" class="form-row danger-row" id="wipeBtn">Delete all data</button>

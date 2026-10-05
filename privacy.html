@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- CSP: the inline theme script is allowed by its hash; change the script and the hash must change too. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-S8nFSsPXG2ObcYAt7jsmHHPXudEfmr+7/xCVD4/b/qg='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Privacy policy · lockedin</title>
 <meta name="description" content="How lockedin handles your data: the camera check runs on your device and is never uploaded, accounts are optional, and analytics are only sent if you allow them.">
@@ -24,7 +26,7 @@
 <main class="doc">
   <a class="brand" href="./"><img src="icon.svg" alt="" width="30" height="30"><span class="wordmark">locked<span>in</span></span></a>
   <h1>Privacy policy</h1>
-  <p class="caption">Last updated October 4, 2026 (clip links added)</p>
+  <p class="caption">Last updated October 5, 2026 (invites, data retention)</p>
 
   <h2>The short version</h2>
   <ul>
@@ -38,6 +40,7 @@
   <p>When you turn the camera on, your browser runs a small vision model on your own computer or phone. It works out things like "a phone is in view" or "eyes closed" and turns them into a status, like Focused or On your phone. The video, the images and the measurements of your face never leave your device. We never receive them. The microphone is never used.</p>
   <p>If you turn on Clips, short clips are kept only in that browser tab and disappear when you close it, unless you choose to share or save one yourself.</p>
   <p><b>Clip links.</b> If you are signed in and tap "Share link" on a clip, that one clip (about 6 seconds of video, no sound) is uploaded so anyone who has the link can watch it. Links are not listed or searchable anywhere. Only share clips that everyone in them is OK with. You can delete any shared clip from your Account at any time, and deleting your account deletes all of them.</p>
+  <p><b>Invites.</b> A clip link also works as an invite. The page that plays it shows your display name and avatar, so the person you sent it to knows who invited them. If they make an account from that link, we record that they joined from your clip (which clip and when), so we can give you both the invite keys. Neither of you can see the other's email or account.</p>
 
   <h2>Without an account</h2>
   <p>Your sessions, keys, streak, settings and any custom background or alarm sound are saved only in your browser on this device. Clearing your browser data erases them, so use Back up in History if you want a copy.</p>
@@ -46,7 +49,8 @@
   <p>If you create an account, we store:</p>
   <ul>
     <li>Your email address and a scrambled (hashed) version of your password, or your Google account id if you sign in with Google.</li>
-    <li>A display name and avatar emoji that only you see.</li>
+    <li>A display name and avatar emoji. Only you see them in the app. If you share a clip link, anyone who opens that link also sees them, as the person who invited them.</li>
+    <li>If you joined from a friend's clip link, or friends joined from yours: which clip it was, when, and whether the invite keys were given out.</li>
     <li>Your progress: keys, purchases, streak days, settings, goals and your session history. Session history is numbers only, such as how long you focused, how many times you picked up your phone, and where you said you were working (the place tag you picked).</li>
     <li>One summary row per finished session (start and end time, seconds in each state, pickups, alerts and keys earned).</li>
     <li>When you last opened the app and your time zone.</li>
@@ -54,7 +58,8 @@
   <p>Your custom background photo, custom alarm sound and camera learning data are not synced. They stay on the device.</p>
 
   <h2>Analytics (only if you allow them)</h2>
-  <p>When you first open lockedin we ask if you'll share usage stats. Until you tap "Allow analytics", nothing is sent. If you allow them, we record events like "a session started", "a session ended (25 minutes, 80% focus)", "the camera was allowed" or "a setting was changed". For settings we record which setting changed, never what you typed. Each event comes with a random id kept in your browser, a visit id, the page section, the site that sent you here (just the site name), any campaign tags in the link, and rough device info (screen size group, operating system, browser, language, and whether lockedin is installed as an app). We don't store your IP address, and we don't fingerprint your device.</p>
+  <p>When you first open lockedin we ask if you'll share usage stats. Until you tap "Allow analytics", nothing is sent. If you allow them, we record events like "a session started", "a session ended (25 minutes, 80% focus)", "the camera was allowed" or "a setting was changed". For settings we record which setting changed, never what you typed. Each event comes with a random id kept in your browser, a visit id, the page section, the site that sent you here (just the site name), any campaign tags in the link, and rough device info (screen size group, operating system, browser, language, and whether lockedin is installed as an app). We don't store your IP address with these events, and we don't fingerprint your device. (Our database host, like any server, keeps short technical request logs for a few days.)</p>
+  <p><b>How long we keep it.</b> Analytics events and "Not right" reports are deleted automatically after about 13 months. Your account data stays until you delete it or the account.</p>
   <p>These events go to our database. If the site owner has turned on Google Analytics, the same events also go to Google Analytics, using Google's consent mode with ads features turned off. If you're signed in, your account id is attached so we can count returning users. You can turn analytics off any time in Settings or Account. Turning it off also deletes the random id in your browser.</p>
   <p>If you tap "Not right? I'm focused" while analytics are on, we also record which status was wrong, so we can make detection better.</p>
 
@@ -68,9 +73,9 @@
 
   <h2>Deleting your data</h2>
   <ul>
-    <li><b>Account:</b> open Account, then Delete account. This erases your account, your synced progress, your session rows and any analytics events tied to your account, right away.</li>
+    <li><b>Account:</b> open Account, then Delete account. This erases your account, your synced progress, your session rows, your shared clips and their links, your invite records, and the analytics events tied to your account or sent from that browser before you signed in, right away.</li>
     <li><b>This device:</b> Settings, then Delete all data.</li>
-    <li><b>Export:</b> Account, then Export my data downloads everything your account holds as a file.</li>
+    <li><b>Export:</b> Account, then Export my data downloads everything your account holds as a file: your profile, synced progress, session rows, shared clip links and invites.</li>
   </ul>
 
   <h2>Age</h2>

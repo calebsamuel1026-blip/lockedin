@@ -8,9 +8,10 @@ const open = () => new Promise((resolve, reject) => {
 async function run(mode, fn) {
   const db = await open();
   return new Promise((resolve, reject) => {
+    // Close the connection when done: an open one per call piles up and blocks "Delete all data" (deleteDatabase).
     const tx = db.transaction("files", mode), req = fn(tx.objectStore("files"));
-    tx.oncomplete = () => resolve(req?.result);
-    tx.onerror = () => reject(tx.error);
+    tx.oncomplete = () => { db.close(); resolve(req?.result); };
+    tx.onerror = tx.onabort = () => { db.close(); reject(tx.error); };
   });
 }
 export const getFile = key => run("readonly", s => s.get(key)).catch(() => null);

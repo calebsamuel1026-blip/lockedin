@@ -118,7 +118,11 @@ function loadGA() {
   window.gtag("consent", "default", {ad_storage: "denied", ad_user_data: "denied", ad_personalization: "denied", analytics_storage: "denied"});
   window.gtag("consent", "update", {analytics_storage: "granted"});
   window.gtag("js", new Date());
-  window.gtag("config", GA_ID, {app_version: APP_VERSION, ...(auth.userId ? {user_id: auth.userId} : {})});
+  // page_location without the query: the landing URL can carry a sign-in code (?code=) or a friend's name
+  // (?invite=&from=). Campaign tags go in their own fields instead.
+  const u = visit.utm, campaign = u.source ? {campaign_source: u.source, campaign_medium: u.medium, campaign_name: u.campaign, campaign_term: u.term, campaign_content: u.content} : {};
+  window.gtag("config", GA_ID, {app_version: APP_VERSION, page_location: location.origin + location.pathname, page_referrer: visit.referrer || undefined,
+    ...campaign, ...(auth.userId ? {user_id: auth.userId} : {})});
   const s = document.createElement("script");
   s.async = true; s.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(GA_ID)}`;
   document.head.append(s);
