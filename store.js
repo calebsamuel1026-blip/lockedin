@@ -1,5 +1,8 @@
-// All data lives in this browser's localStorage. No accounts, no server copy.
+// All data lives in this browser's localStorage. Signing in (cloud.js) syncs a copy to your account.
 const NS = "lockin.v1.";
+// cloud.js listens so it knows when there's something new to sync.
+const saveListeners = new Set();
+export const onSave = fn => saveListeners.add(fn);
 export const KEYS = ["settings", "sessions", "active", "goals", "calib", "onboarded", "coachNotes", "reportSeen", "lastPlace", "learn", "adapt", "feedback", "wallet"];
 
 export function load(key, fallback) {
@@ -15,6 +18,7 @@ export function save(key, value) {
   try {
     if (value === undefined || value === null) localStorage.removeItem(NS + key);
     else localStorage.setItem(NS + key, JSON.stringify(value));
+    saveListeners.forEach(fn => { try { fn(key); } catch {} });
     return true;
   } catch (err) {
     window.dispatchEvent(new CustomEvent("lockin:storage-error", {detail: err}));

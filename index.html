@@ -3,15 +3,43 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>lockedin</title>
-<meta name="description" content="lockedin is a free focus timer that runs in the background, notices when you pick up your phone, and plans your day.">
+<title>lockedin: free focus timer that catches you on your phone</title>
+<meta name="description" content="lockedin is a free study and focus timer. It runs in the background, notices when you pick up your phone, doze off or zone out, and rewards you for staying locked in. The camera check runs on your device only.">
+<link rel="canonical" href="https://calebsamuel1026-blip.github.io/lockedin/">
+<!-- Search Console: replace PASTE_TOKEN with the code from the HTML tag method, then remove the comment marks (DEPLOY.md step 8).
+<meta name="google-site-verification" content="PASTE_TOKEN">
+-->
 <meta name="theme-color" content="#0a0a0b" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#f7f7f2" media="(prefers-color-scheme: light)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="lockedin">
-<meta property="og:title" content="lockedin">
-<meta property="og:description" content="Lock in. A focus timer that catches you on your phone.">
-<meta property="og:image" content="icon-512.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="lockedin">
+<meta property="og:url" content="https://calebsamuel1026-blip.github.io/lockedin/">
+<meta property="og:title" content="lockedin: the focus timer that catches you on your phone">
+<meta property="og:description" content="Lock in. A free focus timer that notices your phone, keeps your streak, and runs privately on your device.">
+<meta property="og:image" content="https://calebsamuel1026-blip.github.io/lockedin/icon-512.png">
+<meta property="og:image:width" content="512">
+<meta property="og:image:height" content="512">
+<meta property="og:image:alt" content="lockedin logo">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="lockedin: the focus timer that catches you on your phone">
+<meta name="twitter:description" content="Lock in. A free focus timer that notices your phone, keeps your streak, and runs privately on your device.">
+<meta name="twitter:image" content="https://calebsamuel1026-blip.github.io/lockedin/icon-512.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  "name": "lockedin",
+  "url": "https://calebsamuel1026-blip.github.io/lockedin/",
+  "description": "A free focus timer that runs in the background, notices when you pick up your phone, and rewards you for staying focused. Camera processing happens on your device only.",
+  "applicationCategory": "EducationalApplication",
+  "operatingSystem": "Any (web browser)",
+  "browserRequirements": "Requires JavaScript. Camera optional.",
+  "image": "https://calebsamuel1026-blip.github.io/lockedin/icon-512.png",
+  "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
+}
+</script>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" id="favicon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-180.png">
@@ -35,7 +63,6 @@
     <a href="#goals" data-view="goals">Goals</a>
     <a href="#insights" data-view="insights">Insights<span class="badge hidden" id="insightsBadge"><span class="sr-only">New weekly report</span></span></a>
     <a href="#history" data-view="history">History</a>
-    <a href="#school" data-view="school">School<span class="badge live hidden" id="schoolBadge"><span class="sr-only">classmates locked in now</span></span></a>
   </nav>
   <div class="nav-actions">
     <button class="chip-btn streak-chip" id="streakBtn" title="Your streak: lock in 25 minutes a day to keep it" aria-label="Day streak"><span aria-hidden="true">🔥</span><b id="streakTop">0</b></button>
@@ -45,6 +72,9 @@
     </button>
     <button class="round-btn" id="helpBtn" title="Help and shortcuts (?)" aria-label="Help and keyboard shortcuts">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.4c-.6.3-1 .8-1 1.5v.5"/><circle cx="12" cy="16.9" r=".7" class="fill"/></svg>
+    </button>
+    <button class="round-btn acct-btn" id="accountBtn" title="Account and sync" aria-label="Account and sync">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.6" r="3.7"/><path d="M4.8 19.6a7.2 7.2 0 0 1 14.4 0"/></svg><span class="acct-dot hidden" id="acctDot"></span>
     </button>
     <button class="round-btn" id="settingsBtn" title="Settings" aria-label="Settings">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2.2"/><circle cx="8" cy="17" r="2.2"/></svg>
@@ -280,63 +310,7 @@
     </header>
     <div class="kpis" id="allKpis"></div>
     <ul class="group sessions" id="historyBody"></ul>
-    <p class="footnote center">Your data lives only in this browser. Back it up now and then, because clearing browser data erases it.</p>
-  </div>
-</section>
-<!-- ================= SCHOOL ================= -->
-<section class="view" id="v-school" aria-labelledby="schoolTitle">
-  <div class="page">
-    <header class="large-title">
-      <p class="eyebrow" id="schoolEyebrow">Students only</p>
-      <h1 id="schoolTitle">Your school</h1>
-    </header>
-
-    <div id="schoolSignedOut">
-      <article class="card signin-card">
-        <div class="signin-hero" aria-hidden="true">🎓</div>
-        <h2 class="signin-title">Lock in with your school</h2>
-        <p class="secondary">Sign in with your school email to see who from your university is locked in right now, climb your school's weekly leaderboard, and keep your history on every device.</p>
-        <form id="signinForm" class="signin" novalidate>
-          <label for="schoolEmail" class="sr-only">School email</label>
-          <input type="email" id="schoolEmail" placeholder="you@university.edu" autocomplete="email" required>
-          <button class="pill filled" type="submit" id="sendCodeBtn">Send sign-in email</button>
-        </form>
-        <form id="codeForm" class="signin hidden" novalidate>
-          <p class="secondary small" id="codeSentTo"></p>
-          <label for="codeInput" class="sr-only">Code from the email</label>
-          <input type="text" id="codeInput" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Code (if your email has one)">
-          <button class="pill filled" type="submit">Sign in</button>
-          <button class="link-btn" type="button" id="codeBack">Use a different email</button>
-        </form>
-        <div id="signinMsg" role="alert"></div>
-        <p class="footnote">Only school emails (.edu, .ac.uk and similar) can join. Classmates see your display name, never your email.</p>
-      </article>
-      <p class="footnote center" id="cloudOffline" hidden>School features couldn't load. Check your connection and refresh.</p>
-    </div>
-
-    <div id="schoolSignedIn" class="hidden">
-      <div class="kpis" id="schoolKpis"></div>
-      <article class="card">
-        <header class="card-title"><h2><span class="pulse" aria-hidden="true"></span>Locked in now</h2><span class="caption" id="liveCount"></span></header>
-        <ul class="live-list" id="liveList"></ul>
-      </article>
-      <article class="card">
-        <header class="card-title"><h2>This week's leaderboard</h2><span class="caption">Hours locked in</span></header>
-        <ol class="board" id="board"></ol>
-      </article>
-      <article class="card">
-        <header class="card-title"><h2>You</h2><span class="caption" id="syncStatus"></span></header>
-        <div class="form-group">
-          <div class="form-row"><label for="pName">Display name</label><input type="text" id="pName" maxlength="30" autocomplete="nickname"></div>
-          <div class="form-row"><label for="pEmoji">Emoji</label><select id="pEmoji"><option>🔒</option><option>🔥</option><option>⚡</option><option>🧠</option><option>📚</option><option>🎧</option><option>☕</option><option>🦉</option><option>🐺</option><option>🐸</option><option>🌙</option><option>🌱</option><option>🎯</option><option>🚀</option><option>💎</option><option>🐱</option></select></div>
-          <div class="form-row"><label for="pLive">Show me on "Locked in now"</label><input type="checkbox" class="switch" id="pLive"></div>
-        </div>
-        <div class="row-actions" style="margin-top:12px">
-          <button class="pill filled sm" id="pSave">Save</button>
-          <button class="pill plain sm" id="signOutBtn">Sign out</button>
-        </div>
-      </article>
-    </div>
+    <p class="footnote center">Your data lives in this browser. <button class="link-btn inline" type="button" data-open-account>Sign in</button> to keep it safe and sync it across devices, or back it up now and then.</p>
   </div>
 </section>
 </main>
@@ -400,11 +374,11 @@
       <div><dt><kbd>B</kbd></dt><dd>Break</dd></div>
       <div><dt><kbd>P</kbd></dt><dd>Pop-out timer</dd></div>
       <div><dt><kbd>C</kbd></dt><dd>Camera on or off</dd></div>
-      <div><dt><kbd>1</kbd>–<kbd>4</kbd></dt><dd>Switch section</dd></div>
+      <div><dt><kbd>1</kbd>–<kbd>3</kbd></dt><dd>Switch section</dd></div>
       <div><dt><kbd>?</kbd></dt><dd>Help</dd></div>
     </dl>
     <h3>Your data</h3>
-    <p>Everything stays in this browser. There are no accounts. AI planning sends only the text you type, your goal titles and simple stats (hours, focus score) to generate a plan, and nothing is stored.</p>
+    <p>Everything stays in this browser unless you create an account, which syncs your progress (keys, streak, settings and session numbers) so it follows you to other devices. Camera video, photos and clips never leave your device. Usage analytics are only sent if you allow them. Read the <a href="privacy.html">privacy policy</a>.</p>
   </div>
   <div class="sheet-actions"><button class="pill plain" id="replayOnboard">Show intro</button><button class="pill filled" data-close>Done</button></div>
 </dialog>
@@ -470,6 +444,14 @@
     </div>
     <p class="group-foot">Places are the quick tags you pick before starting, separated by commas.</p>
 
+    <p class="group-label">Account &amp; privacy</p>
+    <div class="form-group">
+      <div class="form-row"><span>Sync across devices</span><button type="button" class="pill tinted sm" data-open-account id="settingsAcct">Sign in</button></div>
+      <div class="form-row"><label for="s_analytics">Share usage analytics</label><input type="checkbox" class="switch" id="s_analytics"></div>
+      <div class="form-row"><a href="privacy.html">Privacy policy</a><a href="terms.html">Terms</a></div>
+    </div>
+    <p class="group-foot">Analytics are counts like "a session ended", never your camera or anything you type. This switch applies right away.</p>
+
     <div class="form-group">
       <button type="button" class="form-row danger-row" id="wipeBtn">Delete all data</button>
     </div>
@@ -506,6 +488,71 @@
   <button class="story-nav prev" id="storyPrev" aria-label="Previous"></button>
   <button class="story-nav next" id="storyNext" aria-label="Next"></button>
 </dialog>
+
+<dialog id="accountDlg" class="sheet" aria-labelledby="acctTitle">
+  <div class="sheet-bar"><span></span><h2 id="acctTitle">Account</h2><button type="button" class="link-btn strong" data-close>Done</button></div>
+
+  <div id="acctOut">
+    <div class="acct-hero">
+      <div class="acct-glyph" aria-hidden="true">☁️</div>
+      <b>Save your progress across devices</b>
+      <p class="secondary small">Optional. lockedin works fully without an account. Your keys, streak, settings and session history sync. Camera video never leaves your device.</p>
+    </div>
+    <div class="google-wrap" id="googleWrap" hidden>
+      <button type="button" class="pill lg google-btn" id="googleBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M22.6 12.3c0-.8-.1-1.5-.2-2.2H12v4.2h5.9a5 5 0 0 1-2.2 3.3v2.7h3.6c2.1-1.9 3.3-4.8 3.3-8z"/><path fill="#34A853" d="M12 23c3 0 5.5-1 7.3-2.7l-3.6-2.7c-1 .7-2.2 1.1-3.7 1.1-2.9 0-5.3-1.9-6.2-4.5H2.1v2.8A11 11 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.8 14.2a6.6 6.6 0 0 1 0-4.3V7.1H2.1a11 11 0 0 0 0 9.9z"/><path fill="#EA4335" d="M12 5.4c1.6 0 3.1.6 4.2 1.7l3.2-3.2A11 11 0 0 0 2.1 7.1l3.7 2.8C6.7 7.3 9.1 5.4 12 5.4z"/></svg>Continue with Google</button>
+      <span class="or" aria-hidden="true">or use email</span>
+    </div>
+    <div class="seg" role="tablist" aria-label="Create an account or sign in">
+      <button type="button" role="tab" id="tabUp" aria-selected="true" aria-controls="authForm">Create account</button>
+      <button type="button" role="tab" id="tabIn" aria-selected="false" aria-controls="authForm" tabindex="-1">Sign in</button>
+    </div>
+    <form id="authForm" class="auth-form" role="tabpanel" aria-labelledby="tabUp" novalidate>
+      <div class="form-group">
+        <div class="form-row stacked" id="nameRow"><label for="authName">Name <span class="caption">(optional, only you see it)</span></label><input type="text" id="authName" maxlength="30" autocomplete="nickname"></div>
+        <div class="form-row stacked"><label for="authEmail">Email</label><input type="email" id="authEmail" autocomplete="email" inputmode="email" required></div>
+        <div class="form-row stacked"><label for="authPass">Password</label><input type="password" id="authPass" minlength="8" autocomplete="new-password" required aria-describedby="passHint"><span class="caption" id="passHint">At least 8 characters.</span></div>
+      </div>
+      <button class="pill filled lg auth-submit" type="submit" id="authSubmit">Create account</button>
+      <!-- Password reset needs custom email (SMTP) set up in Supabase first; see DEPLOY.md. -->
+      <button class="link-btn" type="button" id="forgotBtn" hidden>Forgot password?</button>
+      <div id="authMsg" role="alert"></div>
+    </form>
+    <p class="caption center-text acct-legal">By creating an account you agree to the <a href="terms.html">Terms</a> and <a href="privacy.html">Privacy Policy</a>. You must be 13 or older.</p>
+  </div>
+
+  <div id="acctIn" class="hidden">
+    <div class="acct-me">
+      <span class="acct-avatar" id="meAvatar" aria-hidden="true">🔒</span>
+      <div><b id="meName"></b><span class="caption" id="meEmail"></span></div>
+    </div>
+    <p class="sync-line" id="syncLine" role="status"></p>
+    <div class="form-group">
+      <div class="form-row"><label for="meNameInput">Display name</label><input type="text" id="meNameInput" maxlength="30" autocomplete="nickname"></div>
+      <div class="form-row"><label for="meAvatarSel">Avatar</label><select id="meAvatarSel"><option>🔒</option><option>🔥</option><option>⚡</option><option>🧠</option><option>📚</option><option>🎧</option><option>☕</option><option>🦉</option><option>🐺</option><option>🐸</option><option>🌙</option><option>🌱</option><option>🎯</option><option>🚀</option><option>💎</option><option>🐱</option></select></div>
+    </div>
+    <div class="row-actions acct-actions">
+      <button type="button" class="pill tinted sm" id="syncNowBtn">Sync now</button>
+      <button type="button" class="pill tinted sm" id="exportBtn">Export my data</button>
+      <button type="button" class="pill tinted sm" id="signOutBtn">Sign out</button>
+    </div>
+    <div class="form-group acct-danger"><button type="button" class="form-row danger-row" id="deleteAcctBtn">Delete account</button></div>
+    <div id="acctMsg" role="alert"></div>
+  </div>
+
+  <p class="group-label">Privacy</p>
+  <div class="form-group">
+    <div class="form-row"><label for="analyticsToggle">Share usage analytics</label><input type="checkbox" class="switch" id="analyticsToggle"></div>
+  </div>
+  <p class="group-foot">Counts like "a session ended" help make lockedin better. Never your camera, never what you type. <a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a></p>
+</dialog>
+
+<div class="consent hidden" id="consent" role="region" aria-labelledby="consentTitle">
+  <p><b id="consentTitle">Help make lockedin better?</b> Allow usage stats, like "a session ended". Your camera never leaves your device and nothing you type is sent. <a href="privacy.html">Privacy</a></p>
+  <div class="consent-actions">
+    <button type="button" class="pill plain sm" id="consentNo">No thanks</button>
+    <button type="button" class="pill filled sm" id="consentYes">Allow analytics</button>
+  </div>
+</div>
 
 <template id="pipTpl">
   <div class="pip">

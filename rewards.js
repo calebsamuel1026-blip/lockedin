@@ -30,6 +30,8 @@ const emit = ev => listeners.forEach(fn => fn(ev));
 // Keys earned per day, for the weekly recap.
 function logDay(n) { const k = dk(new Date()); (wallet.byDay ||= {})[k] = (wallet.byDay[k] || 0) + n; }
 export const earnedOn = day => wallet.byDay?.[day] || 0;
+// Cloud sync pulled a newer wallet from another device.
+export function replaceWallet(w) { wallet = {...fresh(), ...w}; save(); emit({type: "sync"}); }
 
 export function award(amount, why) {
   amount = Math.round(amount);

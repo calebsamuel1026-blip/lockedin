@@ -1,0 +1,7 @@
+# GitHub Pages project sites live under /lockedin/, so crawlers never read this file (they only check the
+# domain root). It's kept for reference; submit the sitemap in Search Console instead (DEPLOY.md).
+User-agent: *
+Allow: /
+Disallow: /lockedin/admin.html
+
+Sitemap: https://calebsamuel1026-blip.github.io/lockedin/sitemap.xml

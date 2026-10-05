@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>lockedin admin</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+<script>document.documentElement.dataset.theme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";</script>
+<style>
+  .adm { max-width: 1100px; margin: 0 auto; padding: 24px 16px 80px; }
+  .adm-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  .adm-top h1 { font: 800 30px/1.1 var(--display); letter-spacing: -.04em; }
+  .adm .kpis { margin-bottom: 14px; }
+  .adm .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+  .chart svg { width: 100%; height: 160px; display: block; }
+  .chart .axis { font-size: 10px; fill: var(--text-3); }
+  .bars rect { fill: var(--brand); }
+  .bars rect.alt { fill: var(--c-focus); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 4px; border-top: 1px solid var(--line); }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); border-top: 0; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .login { max-width: 380px; margin: 60px auto; display: grid; gap: 10px; }
+  .login input { width: 100%; }
+  .muted { color: var(--text-3); font-size: 13px; }
+</style>
+</head>
+<body>
+<main class="adm">
+  <div class="adm-top">
+    <h1>lockedin admin</h1>
+    <div class="row-actions" id="controls" hidden>
+      <select id="days" aria-label="Date range"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option></select>
+      <button class="pill tinted sm" id="refresh">Refresh</button>
+      <button class="pill plain sm" id="out">Sign out</button>
+    </div>
+  </div>
+
+  <form class="login card" id="login" hidden>
+    <h2 class="card-title">Admins only</h2>
+    <label for="email" class="caption">Email</label><input type="email" id="email" autocomplete="email" required>
+    <label for="pass" class="caption">Password</label><input type="password" id="pass" autocomplete="current-password" required>
+    <button class="pill filled" type="submit">Sign in</button>
+    <div id="loginMsg" role="alert"></div>
+  </form>
+
+  <div id="dash" hidden>
+    <div class="kpis" id="kpis"></div>
+    <div class="kpis" id="kpis2"></div>
+    <div class="grid">
+      <article class="card chart"><header class="card-title"><h2>Active users per day</h2></header><div id="cActive"></div></article>
+      <article class="card chart"><header class="card-title"><h2>Sign-ups per day</h2></header><div id="cSignups"></div></article>
+      <article class="card chart"><header class="card-title"><h2>Sessions per day</h2></header><div id="cSessions"></div></article>
+      <article class="card"><header class="card-title"><h2>Retention by first day</h2><span class="caption">D1 / D7</span></header><div id="retention"></div></article>
+      <article class="card"><header class="card-title"><h2>Top events</h2></header><div id="events"></div></article>
+      <article class="card"><header class="card-title"><h2>Detection mix</h2><span class="caption">account sessions</span></header><div id="mix"></div></article>
+      <article class="card"><header class="card-title"><h2>Alerts and "Not right" taps</h2></header><div id="feedback"></div></article>
+    </div>
+    <p class="muted" id="stamp"></p>
+  </div>
+  <p class="muted" id="msg" role="status"></p>
+</main>
+<script type="module" src="admin.js"></script>
+</body>
+</html>

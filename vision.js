@@ -7,8 +7,8 @@
 //  - Phone pose: whenever the phone detector sees a phone in your hand, your head pose at that moment
 //    is saved as an example of "you on your phone". This sharpens phone detection over time.
 //  - Feedback: "Not my phone" adds your current pose to the work zone.
-// Signals exposed to the app: phone in hand, phone posture, head down, eyes closed, yawns,
-// looking off-screen, talking, other people in frame, and tracking quality.
+// Signals exposed to the app: phone in hand, phone call, phone posture, head down, head on the desk, eyes closed,
+// yawns, looking off-screen, turned sideways, talking (not chewing), other people in frame, and tracking quality.
 const MP = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1";
 const FACE_MODEL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 const OBJ_MODEL = "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite2/float16/1/efficientdet_lite2.tflite";
@@ -20,15 +20,21 @@ const MIN_TO_JUDGE = 15;       // ~15 seconds of learning before judging
 const DEG = 180 / Math.PI;
 
 // Detection thresholds. Defaults were picked by tests/tune.mjs against thousands of simulated users.
-export const TUNE = {eyeMove: 0.05, marginPitch: 10, marginYaw: 14, marginEye: 9, phoneNear: 0.85, downDeg: 12, downRatio: 0.08, eyeDown: 6, matchDeg: 7};
+export const TUNE = {eyeMove: 0.05, marginPitch: 8, marginYaw: 14, marginEye: 5, phoneNear: 0.95, downDeg: 12, downRatio: 0.1, eyeDown: 8, matchDeg: 5,
+  sideExtra: 4,       // degrees past the work zone's side edge (plus margin) that count as "turned away"
+  deskHits: 0.15,     // face found in under this share of recent frames after eyes shut = head on the desk
+  talkSd: 0.05, talkOpen: 0.18, chewRhythm: 0.6, // jaw spread, widest opening, and how clock-like the jaw can be and still be speech
+  callCy: 0.42, callHoldMs: 12000};  // a phone seen this high in frame (at your ear) while you talk = phone call
 
 // Try the graphics card first. If that fails, retry on the CPU with a fresh runtime, because a failed
 // GPU start can leave the shared one unusable.
+let cpuFallback = false;   // reported as the "backend" in analytics
 async function makeTask(Cls, fileset, path, extra, FilesetResolver) {
   const opts = d => ({baseOptions: {modelAssetPath: path, delegate: d}, runningMode: "VIDEO", ...extra});
   try { return await Cls.createFromOptions(fileset, opts("GPU")); }
   catch (err) {
     console.warn("GPU vision failed, using CPU", err);
+    cpuFallback = true;
     const fresh = await FilesetResolver.forVisionTasks(`${MP}/wasm`);
     return await Cls.createFromOptions(fresh, opts("CPU"));
   }
@@ -72,13 +78,16 @@ function measure(r, i) {
 
 const feat = m => [m.pitch, m.yaw, (m.eyeDown - m.eyeUp) * 30];
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], (a[2] - b[2]) * 0.7);
-const pct = (arr, p) => { const a = [...arr].sort((x, y) => x - y); return a[Math.min(a.length - 1, Math.max(0, Math.round(p * (a.length - 1))))]; };
+// Typed-array sort is numeric and much faster than a comparator sort (this runs every few seconds).
+const sorted = arr => Float64Array.from(arr).sort();
+const at = (a, p) => a[Math.min(a.length - 1, Math.max(0, Math.round(p * (a.length - 1))))];
+const pct = (arr, p) => at(sorted(arr), p);
 
 // Build the model from learned samples. work: [{f, ratio}], phone: [f].
 export function buildModel(work, phone) {
   const F = work.map(w => w.f);
-  const min = [0, 1, 2].map(k => pct(F.map(f => f[k]), 0.1));
-  const max = [0, 1, 2].map(k => pct(F.map(f => f[k]), 0.9));
+  const cols = [0, 1, 2].map(k => sorted(F.map(f => f[k])));
+  const min = cols.map(c => at(c, 0.1)), max = cols.map(c => at(c, 0.9));
   const ratioMax = pct(work.map(w => w.ratio), 0.9);
   const ph = phone.length >= 4 ? [0, 1, 2].map(k => pct(phone.map(f => f[k]), 0.5)) : null;
   const downSign = ph ? Math.sign(ph[0] - (min[0] + max[0]) / 2) || 0 : 0;
@@ -98,12 +107,14 @@ export class Vision extends EventTarget {
     this.workBuf = []; this.phoneBuf = []; this.recent = []; this.lastLearn = 0; this.lastBuild = 0;
     this.lastFace = 0; this.lastObj = 0; this.lastFrameAt = 0; this.lastVideoTime = -1;
     this.reader = null; this.useVideoElement = true; this.graceUntil = 0;
-    this.jawHist = []; this.talkEMA = 0;
+    this.jawHist = []; this.jawSlots = []; this.talkEMA = 0; this.talkAt = 0; this.sideEMA = 0; this.sideAtLoss = false; this.closedEMA = 0; this.callAt = 0;
     this.closedSince = 0; this.yawnSince = 0; this.yawns = [];
     this.hits = [];
   }
 
   msg(text) { this.dispatchEvent(new CustomEvent("message", {detail: text})); }
+  // Start-up outcomes for analytics: {kind: "camera" | "model", ...}. Never images or measurements.
+  status(detail) { this.dispatchEvent(new CustomEvent("status", {detail})); }
   changed() { this.dispatchEvent(new Event("change")); }
 
   // Saved learning from a previous visit seeds the buffers so detection is warm right away.
@@ -126,12 +137,13 @@ export class Vision extends EventTarget {
   }
 
   async _start() {
-    if (!navigator.mediaDevices?.getUserMedia) { this.failed = true; this.msg("This browser can't use a camera here. Make sure the page is on https."); return; }
+    if (!navigator.mediaDevices?.getUserMedia) { this.failed = true; this.status({kind: "camera", result: "error", reason: "unsupported"}); this.msg("This browser can't use a camera here. Make sure the page is on https."); return; }
     this.msg("Starting camera…");
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({video: {width: {ideal: 960}, height: {ideal: 540}, facingMode: "user"}, audio: false});
     } catch (err) {
       this.failed = true;
+      this.status({kind: "camera", result: err?.name === "NotAllowedError" ? "denied" : "error", reason: String(err?.name || "")});
       this.msg(err?.name === "NotAllowedError"
         ? "Camera is blocked. Click the camera icon in your address bar, allow it, then turn the camera on again."
         : err?.name === "NotFoundError" ? "No camera was found on this device." : "Couldn't start the camera. Is another app using it?");
@@ -142,17 +154,21 @@ export class Vision extends EventTarget {
     this.video.srcObject = this.stream;
     try { await this.video.play(); } catch {}
     this.on = true; this.changed();
+    this.status({kind: "camera", result: "granted"});
 
     if (!this.face) {
       this.msg("Loading the on-device vision models (first time takes a few seconds)…");
+      const t0 = performance.now();
       try {
         const {FilesetResolver, FaceLandmarker, ObjectDetector} = await import(`${MP}/vision_bundle.mjs`);
         const fileset = await FilesetResolver.forVisionTasks(`${MP}/wasm`);
         this.face = await makeTask(FaceLandmarker, fileset, FACE_MODEL, {numFaces: 3, outputFaceBlendshapes: true, outputFacialTransformationMatrixes: true,
           minFaceDetectionConfidence: 0.3, minFacePresenceConfidence: 0.3, minTrackingConfidence: 0.3}, FilesetResolver);
         this.obj = await makeTask(ObjectDetector, fileset, OBJ_MODEL, {scoreThreshold: 0.3, maxResults: 5, categoryAllowlist: ["cell phone", "person"]}, FilesetResolver);
+        this.status({kind: "model", ok: true, backend: cpuFallback ? "cpu" : "gpu", ms: Math.round(performance.now() - t0)});
       } catch (err) {
         console.error(err);
+        this.status({kind: "model", ok: false, reason: String(err?.name || "error")});
         this.failed = true;
         this.stream?.getTracks().forEach(t => t.stop());
         this.stream = null; this.video.srcObject = null; this.on = false;
@@ -228,8 +244,11 @@ export class Vision extends EventTarget {
   ingest(face, det) {
     const now = Date.now();
     this.hits.push(face ? 1 : 0); if (this.hits.length > 50) this.hits.shift();
+    this.jawSlots.push(face ? face.m.jaw : null); if (this.jawSlots.length > 20) this.jawSlots.shift();
     if (!face) {
-      this.offEMA *= 0.9; this.talkEMA *= 0.9; this.yawnSince = 0;
+      // A missed frame is the tracker's fault, not a pause in speech, so talking fades slowly. Turned far to the side
+      // is exactly when the tracker loses you, so sideEMA isn't faded at all (sideAtLoss carries it).
+      this.offEMA *= 0.9; this.talkEMA *= 0.97; this.yawnSince = 0;
       if (now - this.faceAt > 1500) this.closedSince = 0; // only forget closed eyes if the face is really gone
     }
     else {
@@ -242,6 +261,8 @@ export class Vision extends EventTarget {
       this.trackGaze(m);
       this.trackExpression(m);
       this.trackEyes(m);
+      // Eyes shut on most recent sightings (a blink is one frame, so it barely moves this).
+      this.closedEMA = (this.closedEMA || 0) * 0.7 + (m.blink > 0.55 ? 0.3 : 0);
       if (this.model) this.judge(m);
       this.learn(m);
     }
@@ -251,7 +272,9 @@ export class Vision extends EventTarget {
     if (det) {
       this.phoneHits = (this.phoneHits || []).filter(t => now - t < 6000); this.phoneHits.push(now);
       this.phoneAt = now; this.phoneBox = det.box || null;
-      if (det.cy < 0.75) {
+      // Up by your ear while you talk: a phone call. Not a scrolling posture, so it's never self-taught.
+      if (det.cy < TUNE.callCy && (this.talkEMA > 0.3 || this.talkedWithin(TUNE.callHoldMs))) this.callAt = now;
+      else if (det.cy < 0.75) {
         this.phoneHeldAt = now;
         // Self-teaching: the detector just saw a phone in your hand, so this is what "you on your phone" looks like.
         // Only trust it if the phone was seen twice in a few seconds and you're not in your normal work posture,
@@ -313,7 +336,13 @@ export class Vision extends EventTarget {
     this.downEMA = this.downEMA * 0.8 + (phonePose || eyesDown ? 0.2 : 0);
     // Off-screen: pointing outside your work zone in a direction that isn't "down at a phone".
     this.offEMA = this.offEMA * 0.85 + (!inWork && !phonePose && !eyesDown ? 0.15 : 0);
+    // Turned sideways past the work zone (a friend, a window, across the room). Unlike a still stare this counts even
+    // with moving eyes: you're reading or watching something that isn't your work. A wide monitor or a second screen
+    // you use a lot is inside the learned zone, so it never counts.
+    const yawOut = Math.max(M.min[1] - margin[1] - f[1], f[1] - M.max[1] - margin[1]);
+    this.sideEMA = this.sideEMA * 0.8 + (yawOut > TUNE.sideExtra / s && !phonePose ? 0.2 : 0);
     this.downAtLoss = this.headDownEMA > 0.5;
+    this.sideAtLoss = this.sideEMA > 0.5;
   }
 
   // Eyes jumping around (reading, scanning a page) vs. a still, empty stare. Spread of gaze over ~3s.
@@ -339,12 +368,33 @@ export class Vision extends EventTarget {
 
   trackTalking(m) {
     // Talking = the jaw keeps opening and closing (spread over ~3s). No microphone involved.
-    this.jawHist.push(m.jaw); if (this.jawHist.length > 15) this.jawHist.shift();
-    if (this.jawHist.length < 10) return;
-    const mean = this.jawHist.reduce((a, b) => a + b, 0) / this.jawHist.length;
-    const sd = Math.sqrt(this.jawHist.reduce((a, b) => a + (b - mean) ** 2, 0) / this.jawHist.length);
-    const talking = sd > 0.05 && Math.max(...this.jawHist) > 0.18 && Math.max(...this.jawHist) < 0.7;
+    const h = this.jawHist;
+    h.push(m.jaw); if (h.length > 15) h.shift();
+    if (h.length < 10) return;
+    const n = h.length, mean = h.reduce((a, b) => a + b, 0) / n;
+    const v = h.reduce((a, b) => a + (b - mean) ** 2, 0) / n, sd = Math.sqrt(v), max = Math.max(...h);
+    // ...and the mouth must still be opening in the last second, so "talking" ends soon after you stop.
+    const lately = Math.max(...h.slice(-5)) > TUNE.talkOpen;
+    const talking = sd > TUNE.talkSd && max > TUNE.talkOpen && max < 0.7 && lately && this.jawRhythm() < TUNE.chewRhythm;
     this.talkEMA = this.talkEMA * 0.88 + (talking ? 0.12 : 0);
+    if (this.talkEMA > 0.5) this.talkAt = Date.now();
+  }
+
+  // Chewing (food, gum) is a steady ~1-2 bites a second: the jaw signal repeats itself 3-6 frames later. Speech is
+  // irregular at this frame rate, so a strong repeat means eating, not talking. Uses the frame-by-frame record
+  // (missed frames as gaps) because the rhythm only shows with the real spacing between frames.
+  jawRhythm() {
+    const h = this.jawSlots, ok = h.filter(x => x != null);
+    if (ok.length < 8) return 0;
+    const mean = ok.reduce((a, b) => a + b, 0) / ok.length, v = ok.reduce((a, b) => a + (b - mean) ** 2, 0) / ok.length;
+    if (v < 1e-4) return 0;
+    let best = 0;
+    for (let lag = 3; lag <= 6; lag++) {
+      let c = 0, k = 0;
+      for (let i = lag; i < h.length; i++) if (h[i] != null && h[i - lag] != null) { c += (h[i] - mean) * (h[i - lag] - mean); k++; }
+      if (k >= 6) best = Math.max(best, c / (k * v));
+    }
+    return best;
   }
 
   trackEyes(m) {
@@ -379,7 +429,7 @@ export class Vision extends EventTarget {
       const mid = [0, 1, 2].map(k => pct(this.recent.map(f => f[k]), 0.5));
       (this.taught ||= []).push(mid); if (this.taught.length > 12) this.taught.shift();
     }
-    this.downEMA = 0; this.headDownEMA = 0; this.offEMA = 0; this.downAtLoss = false;
+    this.downEMA = 0; this.headDownEMA = 0; this.offEMA = 0; this.sideEMA = 0; this.downAtLoss = false; this.sideAtLoss = false;
     this.dispatchEvent(new Event("learned"));
   }
 
@@ -405,9 +455,24 @@ export class Vision extends EventTarget {
   get inGrace() { return Date.now() < this.graceUntil; }
   get phoneCalibrated() { return !!this.model?.phone; }
   get quality() { return this.hits.length < 10 ? null : Math.round(this.hits.reduce((a, b) => a + b, 0) / this.hits.length * 100); }
+  // Face found on few frames lately, last seen with eyes shut or head dropped, body still in the chair (no phone around:
+  // that's the lap-phone case). Dropping the head with open eyes needs the face to be almost fully gone.
+  // (Rates, not "face gone for Xs": a face on the desk still gets found now and then.)
+  get headOnDesk() {
+    // The person detector misses a slumped body now and then, so "still here" gets a few seconds of slack.
+    if (this.hits.length < 50 || Date.now() - this.lastSeenAt > 6000 || this.phoneSeenWithin(20000)) return false;
+    const rate = n => this.hits.slice(-n).reduce((a, b) => a + b, 0) / n;
+    return (this.closedEMA > 0.5 && rate(25) < TUNE.deskHits) || (this.downAtLoss && rate(50) < TUNE.deskHits / 3);
+  }
+  // Last sightings had the eyes shut and the face has dropped out since (dozing off, not looking down at something).
+  get eyesShutAtLoss() { return !this.faceVisible && this.closedEMA > 0.5; }
   get eyesClosedMs() { return this.closedSince && this.faceVisible ? Date.now() - this.closedSince : 0; }
   yawnsWithin(ms) { return this.yawns.filter(t => Date.now() - t < ms).length; }
   get offScreen() { return this.faceVisible && this.offEMA > 0.6; }
+  // Head turned sideways past your work zone (see judge).
+  get lookingSide() { return this.faceVisible && this.sideEMA > 0.5; }
+  // Phone at your ear and still talking: a call (the detector often loses a phone pressed to the head, hence the hold).
+  get onCall() { return !this.inGrace && Date.now() - this.callAt < TUNE.callHoldMs && this.talkedWithin(TUNE.callHoldMs); }
   // Moving eyes = reading or scanning something, so you aren't zoned out.
   get eyesActive() { return (this.eyeMotion ?? 1) > TUNE.eyeMove; }
   // A phone counts as "in use" when it's held up and seen at least twice in a few seconds, or seen once while
@@ -421,10 +486,11 @@ export class Vision extends EventTarget {
   }
   get talking() { return this.faceVisible && this.talkEMA > 0.5; }
   get withOthers() { return Date.now() - this.othersAt < 8000; }
-  resetTalk() { this.jawHist = []; this.talkEMA = 0; }
+  talkedWithin(ms) { return Date.now() - this.talkAt < ms; }
+  resetTalk() { this.jawHist = []; this.jawSlots = []; this.talkEMA = 0; this.talkAt = 0; }
   resetPhone(ms = 8000) {
     this.phoneAt = 0; this.phoneHeldAt = 0; this.phoneBox = null;
-    this.downEMA = 0; this.headDownEMA = 0; this.offEMA = 0; this.downAtLoss = false; this.graceUntil = Date.now() + ms;
+    this.downEMA = 0; this.headDownEMA = 0; this.offEMA = 0; this.downAtLoss = false; this.callAt = 0; this.graceUntil = Date.now() + ms;
   }
   recover() {
     if (!this.ready) return;

@@ -5,7 +5,11 @@ import * as rewards from "./rewards.js";
 import {getFile, putFile, shrinkImage} from "./files.js";
 import * as clipper from "./clips.js";
 import * as emoji from "./emoji.js";
+import * as analytics from "./analytics.js";
+import {GOOGLE_AUTH_ENABLED, GSC_VERIFICATION} from "./config.js";
 const {DISTRACTED} = engine;
+const {track} = analytics;
+analytics.watchErrors();
 
 /* ================= constants & state ================= */
 const $ = s => document.querySelector(s);
@@ -15,11 +19,9 @@ const IDX = Object.fromEntries(STATES.map((k, i) => [k, i]));
 const LABEL = {focused: "Focused", phone: "On your phone", away: "Away", break: "On break", chat: "Chatting", down: "Head down",
   sleepy: "Eyes closed", zoned: "Zoned out", paused: "Paused", idle: "Ready"};
 const COLOR_VAR = {focused: "--focused", phone: "--phone", away: "--away", break: "--break", chat: "--chat", down: "--down", sleepy: "--sleepy", zoned: "--zoned"};
-// School accounts are built (cloud.js, supabase/schema.sql) but switched off until sign-in email is set up.
-const SCHOOL_ENABLED = false;
 // The Goals section is switched off for now (the code stays for later).
 const GOALS_ENABLED = false;
-const VIEWS = ["focus", ...(GOALS_ENABLED ? ["goals"] : []), "insights", "history", ...(SCHOOL_ENABLED ? ["school"] : [])];
+const VIEWS = ["focus", ...(GOALS_ENABLED ? ["goals"] : []), "insights", "history"];
 const ICON_PLAY = '<svg viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 24 24"><rect x="6" y="5" width="4.2" height="14" rx="1.3"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.3"/></svg>';
 
@@ -36,7 +38,7 @@ if ((settings.v || 1) < 2) { if (settings.downSec < 12) settings.downSec = 12; s
 if (settings.v < 3) { if (settings.phoneAlertSec === 10) settings.phoneAlertSec = 5; settings.v = 3; store.save("settings", settings); }
 let sessions = store.load("sessions", []);
 let active = store.load("active", null);
-if (active) { active.tl = (active.tl || []).map(b => STATES.map((_, i) => b[i] || 0)); active.stats = {chat: 0, down: 0, sleepy: 0, zoned: 0, collab: 0, ...active.stats}; }
+if (active) { active.tl = (active.tl || []).map(b => STATES.map((_, i) => b[i] || 0)); active.stats = {chat: 0, down: 0, sleepy: 0, zoned: 0, collab: 0, ...active.stats}; active.alerts ||= {}; }
 let goalsByDate = store.load("goals", {});
 let aiAvailable = false;
 let passive = false;          // another tab owns tracking
@@ -117,7 +119,6 @@ function showView(v, moveFocus = false) {
   if (v === "goals") renderGoals();
   if (v === "insights") { renderInsights(); markReportSeen(); }
   if (v === "history") renderHistory();
-  if (v === "school") renderSchool(true);
   if (moveFocus) $("#v-" + v + " h1")?.setAttribute("tabindex", "-1"), $("#v-" + v + " h1")?.focus();
 }
 window.addEventListener("hashchange", () => showView(currentView(), true));
@@ -166,6 +167,7 @@ function startSession() {
     id: uid(), startedAt: now - pre, baseMs: pre, runStartedAt: now, addedMs: pre, place, goalId: null,
     stats: Object.fromEntries([...STATES, "collab"].map(k => [k, 0])), tl: [], worked: {}, collab: collabNext,
     pickups: 0, streak: 0, best: 0, blockSec: 0, blockAlerted: false, breakUntil: 0,
+    alerts: {}, keys0: rewards.wallet.earned,
   };
   active.goalId = today()?.goals.find(g => !g.done)?.id || null;
   live.lastSec = now; live.state = "focused"; live.stateSec = 0;
@@ -173,6 +175,7 @@ function startSession() {
   saveActive(true);
   if (settings.autoCamera && !vision.on) vision.start();
   announce("Session started.");
+  track("session_start", {pomodoro: !!settings.pomodoro, collab: !!active.collab, camera: settings.autoCamera || vision.on, pre_min: Math.round(pre / 60000)});
   render();
   $("#pauseBtn").focus({preventScroll: true});
 }
@@ -200,10 +203,14 @@ async function endSession() {
     analyzedStart: active.startedAt + active.addedMs, place: active.place || null,
     stats: active.stats, score: score(active.stats), pickups: active.pickups, best: active.best,
     worked: Object.entries(active.worked).map(([id, sec]) => ({title: goals.find(g => g.id === id)?.title || "Other", sec})).sort((a, b) => b.sec - a.sec),
-    tl: active.tl,
+    tl: active.tl, alerts: active.alerts || {}, tomatoes: active.tomatoes || 0, collab: !!active.collab,
+    keys: Math.max(0, rewards.wallet.earned - (active.keys0 ?? rewards.wallet.earned)),
   };
   sessions.push(rec); saveSessions();
-  cloud?.pushSessions([rec]).then(() => setSync("Synced")).catch(() => setSync("Will sync later"));
+  if (cloud?.user) cloud.queueSession(rec.id);
+  const al = rec.alerts;
+  track("session_end", {minutes: Math.round(rec.seconds / 6) / 10, focus_pct: rec.score, pickups: rec.pickups, pomodoros: rec.tomatoes, keys_earned: rec.keys,
+    alerts_phone: al.phone || 0, alerts_chat: al.chat || 0, alerts_sleepy: al.sleepy || 0, camera: vision.on, collab: rec.collab});
   active = null; store.save("active", null);
   if (vision.on) vision.stop();
   live.state = "idle";
@@ -238,7 +245,7 @@ $("#breakBtn").onclick = () => requestBreak();
 function requestBreak() {
   if (passive || !active) return;
   if (active.breakUntil) return toggleBreak();
-  if (active.blockAlerted || settings.focusBlockMin === 0 || (settings.pomodoro && (active.pomoSec || 0) >= 1500)) { toggleBreak(settings.breakMin); toast("Earned break 🎉"); return; }
+  if (active.blockAlerted || settings.focusBlockMin === 0 || (settings.pomodoro && (active.pomoSec || 0) >= 1500)) { toggleBreak(settings.breakMin); toast("Earned break 🎉"); track("break_taken", {paid: false, minutes: settings.breakMin}); return; }
   $("#breakOpts").innerHTML = rewards.BREAKS.map(b => `<button class="break-opt" data-break-min="${b.min}" ${rewards.wallet.keys < b.price ? "disabled" : ""}>
       <b>${b.min} min</b><span>🔑 ${b.price}</span></button>`).join("");
   const left = Math.max(0, settings.focusBlockMin * 60 - active.blockSec);
@@ -250,6 +257,7 @@ $("#breakOpts").onclick = e => {
   const opt = rewards.BREAKS.find(x => x.min === +b.dataset.breakMin);
   if (!rewards.spend(opt.price, `${opt.min}-minute break`)) { $("#breakMsg").textContent = "Not enough keys yet. Keep locking in."; return; }
   $("#breakDlg").close(); toggleBreak(opt.min); toast(`−${opt.price} 🔑 break`, "spend");
+  track("break_taken", {paid: true, minutes: opt.min, price: opt.price});
 };
 $("#endBtn").onclick = endSession;
 $("#editBtn").onclick = () => {
@@ -327,6 +335,7 @@ function secondTick() {
   if (st === "zoned" && settings.downSound && (s === 1 || s % 20 === 1)) beep("nudge");
 
   const alertKind = engine.alertFor(live, st, settings, now);
+  if (alertKind) { (active.alerts ||= {})[alertKind] = (active.alerts[alertKind] || 0) + 1; track("state_alert", {kind: alertKind}); }
   if (alertKind === "phone") showAlert(settings.alertText.trim() || "Phone down", `${live.reason || "On your phone"} · ${s}s. Put it away and get back to it.`);
   else if (alertKind === "chat") showAlert("Still chatting?", `${live.reason} for ${Math.round(s / 60) || 1} min. Wrap it up, or mark this as group work.`, "chat");
   else if (alertKind === "sleepy") showAlert("Wake up!", "Your eyes have been closed for a while. Stand up, stretch, or take a real break.", "sleepy");
@@ -344,6 +353,8 @@ function secondTick() {
       const long = active.tomatoes % 4 === 0;
       toggleBreak(long ? 15 : 5);
       rewards.award(10, "Finished a pomodoro 🍅");
+      track("pomodoro_complete", {count: active.tomatoes});
+      track("break_taken", {paid: false, minutes: long ? 15 : 5, pomodoro: true});
       notify(`🍅 Pomodoro #${active.tomatoes} done!`, long ? "Four in a row. Take a 15-minute break." : "Take a 5-minute break. Focus restarts automatically.", "soft");
     }
   } else if (settings.focusBlockMin > 0 && !active.blockAlerted && active.blockSec >= settings.focusBlockMin * 60) {
@@ -352,7 +363,6 @@ function secondTick() {
   }
   saveActive();
   if (now % 30000 < 1000) saveGoals();
-  shareLive();
 }
 
 /* ================= alerts ================= */
@@ -435,7 +445,7 @@ $("#alert").addEventListener("cancel", e => { e.preventDefault(); imBack(); }); 
 function imBack() {
   hideAlert();
   vision.resetPhone(15000); vision.resetTalk();
-  live.downSec = 0; live.offSec = 0; live.talkSec = 0; live.lastAlertAt = Date.now(); live.reason = "";
+  live.downSec = 0; live.offSec = 0; live.sideSec = 0; live.deskSec = 0; live.talkSec = 0; live.lastAlertAt = Date.now(); live.reason = "";
   live.offSec = 0; live.focusRun = 2;
   if (DISTRACTED.includes(live.state)) { live.state = "focused"; live.stateSec = 0; }
   render();
@@ -444,18 +454,20 @@ $("#alertOk").onclick = imBack;
 
 // "Not right? I'm focused": every correction teaches lockedin about you, and the adjustments stick.
 const adapt = store.load("adapt", {});
-if (adapt.zoneSec) engine.TUNE.zoneSec = adapt.zoneSec;
-if (adapt.awaySec) engine.TUNE.awaySec = adapt.awaySec;
-if (adapt.sleepySec) engine.TUNE.sleepySec = adapt.sleepySec;
+function applyAdapt() { for (const k of ["zoneSec", "sideSec", "awaySec", "sleepySec"]) if (adapt[k]) engine.TUNE[k] = adapt[k]; }
+applyAdapt();
 function correctMe() {
   const st = live.state;
   if (!DISTRACTED.includes(st) && st !== "away") return;
   const fb = store.load("feedback", {}); fb[st] = (fb[st] || 0) + 1; store.save("feedback", fb);
-  if (st === "phone" || st === "down") vision.teachWork();
-  if (st === "zoned") adapt.zoneSec = engine.TUNE.zoneSec = Math.min(30, engine.TUNE.zoneSec + 3);
-  if (st === "away") adapt.awaySec = engine.TUNE.awaySec = Math.min(45, engine.TUNE.awaySec + 6);
-  if (st === "sleepy") adapt.sleepySec = engine.TUNE.sleepySec = Math.min(12, engine.TUNE.sleepySec + 2);
-  if (st === "chat") { settings.chatSec = Math.min(180, settings.chatSec + 15); saveSettings(); }
+  let setting = null;
+  if (st === "phone" || st === "down") { vision.teachWork(); setting = "teachWork"; }
+  if (st === "zoned" && lookingAway()) { adapt.sideSec = engine.TUNE.sideSec = Math.min(20, engine.TUNE.sideSec + 2); setting = "sideSec"; }
+  else if (st === "zoned") { adapt.zoneSec = engine.TUNE.zoneSec = Math.min(30, engine.TUNE.zoneSec + 3); setting = "zoneSec"; }
+  if (st === "away") { adapt.awaySec = engine.TUNE.awaySec = Math.min(45, engine.TUNE.awaySec + 6); setting = "awaySec"; }
+  if (st === "sleepy") { adapt.sleepySec = engine.TUNE.sleepySec = Math.min(12, engine.TUNE.sleepySec + 2); setting = "sleepySec"; }
+  if (st === "chat") { settings.chatSec = Math.min(180, settings.chatSec + 15); saveSettings(); setting = "chatSec"; }
+  track("not_right_feedback", {state: st, from: "button"}); analytics.feedback(st, setting);
   store.save("adapt", adapt);
   imBack();
   vision.resetPhone(20000);
@@ -464,6 +476,8 @@ function correctMe() {
 $("#wrongBtn").onclick = correctMe;
 $("#alertWrong").onclick = () => {
   const wasHeadDown = /^(Head down|Still on your phone)/.test(live.reason || "");
+  const fix = alertKind === "chat" ? "collab" : alertKind === "sleepy" ? "break" : "teachWork";
+  track("not_right_feedback", {state: alertKind, from: "alert"}); analytics.feedback(alertKind, fix);
   if (alertKind === "chat") { imBack(); setCollab(true); announce("Group work on. Talking counts as focus for this session."); return; }
   if (alertKind === "sleepy") { imBack(); if (active && !active.breakUntil) toggleBreak(); return; }
   // Not my phone: learn that this posture is work, so it won't be flagged again.
@@ -485,6 +499,7 @@ function togglePomo() {
   settings.pomodoro = !settings.pomodoro; saveSettings();
   if (active && settings.pomodoro) active.pomoSec = active.pomoSec || 0;
   toast(settings.pomodoro ? "🍅 Pomodoro on: 25 min focus, 5 min break" : "Pomodoro off");
+  track("settings_change", {key: "pomodoro"});
   render();
 }
 $("#pomoBtn").onclick = togglePomo;
@@ -543,6 +558,8 @@ $("#pipBtn").onclick = openPip;
 /* ================= render: focus ================= */
 function stateNow() { return !active ? "idle" : !active.runStartedAt ? "paused" : live.state; }
 
+// "zoned" covers both a still stare ("Zoned out") and being turned sideways ("Looking away"); the reason tells them apart.
+function lookingAway() { return /^Looking away/.test(live.reason || ""); }
 function render() {
   const has = !!active, running = has && !!active.runStartedAt, st = stateNow();
   $("#preStart").classList.toggle("hidden", has);
@@ -552,7 +569,7 @@ function render() {
   $("#timer").classList.toggle("paused", !running);
   $("#timer").setAttribute("aria-label", `Session time ${clock}`);
   $("#statePill").className = "state s-" + st;
-  $("#stateText").textContent = LABEL[st] || "Focused";
+  $("#stateText").textContent = st === "zoned" && lookingAway() ? "Looking away" : LABEL[st] || "Focused";
   $("#timerSub").textContent = !has ? "Ready when you are"
     : !running ? "Paused. Your time isn't counting."
     : st === "focused" && settings.pomodoro ? `🍅 ×${active.tomatoes || 0} · ${fmtClock(Math.max(0, 1500 - (active.pomoSec || 0)) * 1000).replace(/^0:/, "")} left`
@@ -627,7 +644,7 @@ function render() {
   $("#camWrap").dataset.state = vision.ready ? st : "";
   $("#orbText").textContent = !vision.ready ? "Starting…" : vision.learning ? "Getting to know your setup…"
     : st === "phone" ? "Phone spotted" : st === "down" ? "Head down" : st === "chat" ? "Chatting" : st === "away" ? "Nobody here"
-    : st === "sleepy" ? "Eyes closed" : st === "zoned" ? "Zoned out"
+    : st === "sleepy" ? (/desk/.test(live.reason) ? "Head on the desk" : "Eyes closed") : st === "zoned" ? (lookingAway() ? "Looking away" : "Zoned out")
     : live.confidence != null && live.confidence < 60 ? "Hmm, losing focus?"
     : vision.faceVisible ? "You're locked in" : "Looking for you…";
 
@@ -1078,6 +1095,7 @@ function fillSettings() {
 }
 $("#settingsBtn").onclick = () => { fillSettings(); $("#settingsDlg").showModal(); };
 $("#settingsForm").onsubmit = () => {
+  const before = {...settings};
   const clamp = (v, lo, hi, d) => Number.isFinite(+v) && v !== "" ? Math.min(hi, Math.max(lo, +v)) : d;
   for (const k of SETTING_IDS) {
     const el = $("#s_" + k);
@@ -1094,6 +1112,7 @@ $("#settingsForm").onsubmit = () => {
   if (!active) collabNext = settings.collabDefault;
   settings.sensitivity = clamp(settings.sensitivity, 0.5, 2, 1);
   saveSettings(); applyTheme(); renderPlaces(); renderAll();
+  for (const k of SETTING_IDS) if (before[k] !== settings[k]) track("settings_change", {key: k});
   if (settings.notify && "Notification" in window && Notification.permission === "default") Notification.requestPermission();
   announce("Settings saved.");
 };
@@ -1103,7 +1122,7 @@ $("#forgetBtn").onclick = () => {
   $("#forgetBtn").textContent = "Re-learning…"; setTimeout(() => ($("#forgetBtn").textContent = "Re-learn my setup"), 3000);
 };
 $("#wipeBtn").onclick = () => {
-  if (!confirm("Delete ALL your lockedin data in this browser? Sessions, goals and settings will be gone. Download a backup first if you want to keep them.")) return;
+  if (!confirm("Delete ALL your lockedin data in this browser? Sessions, goals and settings will be gone. Download a backup first if you want to keep them. (If you're signed in, your account keeps its copy. Delete the account in Account to erase that too.)")) return;
   if (vision.on) vision.stop();
   store.clearAll(); try { indexedDB.deleteDatabase("lockedin"); } catch {}
   location.hash = ""; location.reload();
@@ -1118,7 +1137,7 @@ $("#onboardDlg").addEventListener("click", e => {
 });
 $("#obDone").onclick = () => {
   store.save("onboarded", true);
-  $("#onboardDlg").close(); renderAll();
+  $("#onboardDlg").close(); renderAll(); maybeAskConsent();
   $("#startBtn").focus();
 };
 function openOnboarding() {
@@ -1126,10 +1145,16 @@ function openOnboarding() {
   $("#onboardDlg").showModal();
 }
 $("#onboardDlg").addEventListener("cancel", () => store.save("onboarded", true));
+$("#onboardDlg").addEventListener("close", () => maybeAskConsent());
 $("#helpBtn").onclick = () => $("#helpDlg").showModal();
 $("#replayOnboard").onclick = () => { $("#helpDlg").close(); openOnboarding(); };
 
 /* ================= camera wiring ================= */
+vision.addEventListener("status", ({detail: d}) => {
+  if (d.kind === "camera") track("camera_permission", {result: d.result, reason: d.reason || ""});
+  else if (d.ok) track("model_loaded", {backend: d.backend, ms: d.ms});
+  else track("model_failed", {reason: d.reason || ""});
+});
 vision.addEventListener("message", e => { const m = $("#camMsg"); m.textContent = e.detail; m.classList.toggle("hidden", !e.detail); });
 // Learning happens in the background; save it now and then so the next visit starts warm.
 vision.addEventListener("learned", () => store.save("learn", vision.saved));
@@ -1151,6 +1176,7 @@ function applyPreview() {
 applyPreview();
 $("#previewBtn").onclick = () => {
   settings.showPreview = !settings.showPreview; saveSettings(); applyPreview();
+  track("settings_change", {key: "showPreview"});
 };
 
 /* ================= keyboard ================= */
@@ -1189,136 +1215,166 @@ ticker.onmessage = () => {
   }
 };
 
-/* ================= school: accounts, sync, live board, leaderboard ================= */
-let cloud = null;
-const minsSince = t => Math.max(0, Math.round((Date.now() - t) / 60000));
-function setSync(text) { const el = $("#syncStatus"); if (el) el.textContent = text; }
+/* ================= account, sync, analytics choice ================= */
+// Accounts are optional and load lazily. If the Supabase library can't be reached, the app just stays local.
+let cloud = null, cloudLoading = null;
+const hadAccount = () => { try { return !!localStorage.getItem("lockedin.auth"); } catch { return false; } };
 
-function shareLive() {
-  if (!cloud?.user) return;
-  const running = !!active?.runStartedAt;
-  const st = stateNow();
-  cloud.track({active: running, since: active?.startedAt, state: running ? (active.breakUntil ? "break" : st) : "idle",
-    focus: running ? Math.round((score(active.stats) ?? 100) / 10) * 10 : null});
+// Another device's progress arrived: re-read everything the app keeps in memory.
+function reloadFromStore() {
+  if (passive) return;
+  settings = {...DEFAULTS, ...store.load("settings", {})};
+  sessions = store.load("sessions", []);
+  goalsByDate = store.load("goals", {});
+  place = store.load("lastPlace", place);
+  Object.assign(adapt, store.load("adapt", {})); applyAdapt();
+  if (!active) collabNext = settings.collabDefault;
+  streakCache.at = 0;
+  applyTheme(); applyPreview(); applyWallpaper(); renderPlaces(); renderAll();
 }
 
-// Merge cloud and local history so either device can be the source.
-async function syncNow() {
-  if (!cloud?.user) return;
-  setSync("Syncing…");
+function startCloud() {
+  return cloudLoading ||= import("./cloud.js").then(m => {
+    cloud = m;
+    let lastUser = null;
+    cloud.init({
+      onUser(u, event, via) {
+        const id = u?.id || null;
+        // Google sign-ins come back through a redirect, so they're counted here instead of at the button.
+        if (id && id !== lastUser && via === "google") track(Date.now() - Date.parse(u.created_at) < 120000 ? "signup" : "login", {method: "google"});
+        lastUser = id;
+        renderAccount();
+      },
+      onStatus: renderSync,
+      onRemote: reloadFromStore,
+    });
+    renderAccount();
+  }).catch(err => { console.warn("Accounts unavailable", err); cloudLoading = null; });
+}
+async function ensureCloud() {
+  await startCloud();
+  if (!cloud) throw new Error("Accounts can't load right now. Check your connection and try again.");
+  return cloud;
+}
+
+const note = (sel, text, ok = false) => { $(sel).innerHTML = text ? `<div class="notice ${ok ? "" : "err"}">${esc(text)}</div>` : ""; };
+function renderAccount() {
+  const u = cloud?.user || null, p = cloud?.profile;
+  $("#acctOut").classList.toggle("hidden", !!u);
+  $("#acctIn").classList.toggle("hidden", !u);
+  $("#acctDot").classList.toggle("hidden", !u);
+  $("#accountBtn").setAttribute("aria-label", u ? "Account: signed in" : "Account and sync");
+  $("#settingsAcct").textContent = u ? "Manage" : "Sign in";
+  $("#googleWrap").hidden = !GOOGLE_AUTH_ENABLED;
+  const on = analytics.consent() === "granted";
+  $("#analyticsToggle").checked = on; $("#s_analytics").checked = on;
+  if (!u) return;
+  $("#meName").textContent = p?.display_name || "You";
+  $("#meEmail").textContent = u.email || "";
+  $("#meAvatar").textContent = p?.avatar || "🔒";
+  if (document.activeElement !== $("#meNameInput")) $("#meNameInput").value = p?.display_name || "";
+  $("#meAvatarSel").value = p?.avatar || "🔒";
+  renderSync();
+}
+function renderSync() {
+  const s = cloud?.syncStatus();
+  if (!s || !cloud?.user) return;
+  const last = s.lastSync ? fmtTime(s.lastSync) : "";
+  $("#syncLine").dataset.state = s.state;
+  $("#syncLine").textContent = s.state === "syncing" ? "Syncing…"
+    : s.state === "offline" ? `Offline. Your progress will sync when you're back online.${last ? ` Last synced ${last}.` : ""}`
+    : s.state === "error" ? "Couldn't sync just now. lockedin will try again soon."
+    : last ? `Synced ✓ ${last}` : "";
+}
+function openAccount() {
+  if ($("#settingsDlg").open) $("#settingsDlg").close();
+  note("#authMsg", ""); note("#acctMsg", "");
+  renderAccount();
+  $("#accountDlg").showModal();
+  startCloud();
+}
+$("#accountBtn").onclick = openAccount;
+document.addEventListener("click", e => { if (e.target.closest("[data-open-account]")) openAccount(); });
+
+let authMode = "up";
+function setAuthMode(m) {
+  authMode = m;
+  for (const [id, mode] of [["#tabUp", "up"], ["#tabIn", "in"]]) { $(id).setAttribute("aria-selected", String(m === mode)); $(id).tabIndex = m === mode ? 0 : -1; }
+  $("#authForm").setAttribute("aria-labelledby", m === "up" ? "tabUp" : "tabIn");
+  $("#nameRow").classList.toggle("hidden", m !== "up");
+  $("#passHint").classList.toggle("hidden", m !== "up");
+  $("#authPass").autocomplete = m === "up" ? "new-password" : "current-password";
+  $("#authSubmit").textContent = m === "up" ? "Create account" : "Sign in";
+  note("#authMsg", "");
+}
+$("#tabUp").onclick = () => setAuthMode("up");
+$("#tabIn").onclick = () => setAuthMode("in");
+$(".seg").addEventListener("keydown", e => {
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  setAuthMode(authMode === "up" ? "in" : "up"); $(authMode === "up" ? "#tabUp" : "#tabIn").focus();
+});
+$("#authForm").onsubmit = async e => {
+  e.preventDefault();
+  const email = $("#authEmail").value.trim(), pass = $("#authPass").value;
+  if (!/^\S+@\S+\.\S+$/.test(email)) { note("#authMsg", "Enter your email address."); $("#authEmail").focus(); return; }
+  if (pass.length < 8) { note("#authMsg", "Passwords are at least 8 characters."); $("#authPass").focus(); return; }
+  const btn = $("#authSubmit"); btn.disabled = true; note("#authMsg", "");
   try {
-    const remote = await cloud.pullSessions();
-    const have = new Set(sessions.map(s => s.id));
-    const incoming = remote.filter(s => s?.id && !have.has(s.id));
-    if (incoming.length) { sessions = sessions.concat(incoming).sort((a, b) => a.start - b.start); saveSessions(); }
-    const remoteIds = new Set(remote.map(s => s?.id));
-    const outgoing = sessions.filter(s => !remoteIds.has(s.id));
-    await cloud.pushSessions(outgoing);
-    const state = await cloud.pullState();
-    if (state?.goals) {
-      for (const [day, g] of Object.entries(state.goals)) if (!goalsByDate[day] || (g.createdAt || 0) > (goalsByDate[day].createdAt || 0)) goalsByDate[day] = g;
-      saveGoals();
+    const c = await ensureCloud();
+    if (authMode === "up") {
+      const r = await c.signUp(email, pass, $("#authName").value);
+      track("signup", {method: "email"});
+      if (!r.signedIn) note("#authMsg", "Account created. Confirm your email, then sign in here.", true);
+    } else {
+      await c.signIn(email, pass);
+      track("login", {method: "email"});
     }
-    await cloud.pushState({theme: settings.theme, dailyGoalH: settings.dailyGoalH, weeklyGoalH: settings.weeklyGoalH}, goalsByDate);
-    setSync(`Synced · ${sessions.length} session${sessions.length === 1 ? "" : "s"}`);
-    renderAll();
-  } catch (e) { console.warn(e); setSync("Sync failed. Will retry."); }
-}
-
-let schoolTimer = 0;
-async function renderSchool(refresh = false) {
-  const signedIn = !!cloud?.user;
-  $("#schoolSignedOut").classList.toggle("hidden", signedIn);
-  $("#schoolSignedIn").classList.toggle("hidden", !signedIn);
-  $("#cloudOffline").hidden = !!cloud;
-  const p = cloud?.profile;
-  $("#schoolTitle").textContent = p ? `${cloud.schoolLabel(p.school)} is locking in` : "Your school";
-  $("#schoolEyebrow").textContent = p ? p.school : "Students only";
-  if (!signedIn || !p) return;
-  if (document.activeElement?.id !== "pName") $("#pName").value = p.display_name;
-  $("#pEmoji").value = p.emoji; $("#pLive").checked = p.show_live;
-  renderLive();
-  if (!refresh && Date.now() - schoolTimer < 60000) return;
-  schoolTimer = Date.now();
+    $("#authPass").value = "";
+  } catch (err) { note("#authMsg", err.message); }
+  finally { btn.disabled = false; }
+};
+$("#googleBtn").onclick = async () => {
+  try { await (await ensureCloud()).signInGoogle(); } catch (err) { note("#authMsg", err.message); }
+};
+$("#meNameInput").onchange = () => cloud?.updateProfile({display_name: $("#meNameInput").value}).catch(err => note("#acctMsg", err.message));
+$("#meAvatarSel").onchange = () => cloud?.updateProfile({avatar: $("#meAvatarSel").value}).catch(err => note("#acctMsg", err.message));
+$("#syncNowBtn").onclick = () => { saveActive(true); saveGoals(); cloud?.syncNow(); };
+$("#exportBtn").onclick = async () => {
   try {
-    const since = dayKey(weekStartOf(new Date()));
-    const [stats, board] = await Promise.all([cloud.schoolStats(), cloud.leaderboard(since)]);
-    $("#schoolKpis").innerHTML = `
-      <div class="kpi"><span class="k-label" style="color:var(--c-goals)">Students</span><b>${stats?.students ?? 0}</b><span class="sub">on lockedin</span></div>
-      <div class="kpi"><span class="k-label" style="color:var(--c-hours)">Live now</span><b id="liveKpi">${cloud.live().length}</b><span class="sub">locked in</span></div>
-      <div class="kpi"><span class="k-label" style="color:var(--c-focus)">This week</span><b>${(+stats?.hours_this_week || 0).toFixed(1)}<small>h</small></b><span class="sub">school total</span></div>
-      <div class="kpi"><span class="k-label" style="color:var(--break)">Your rank</span><b>${(() => { const i = board.findIndex(r => r.is_me); return i < 0 ? "--" : "#" + (i + 1); })()}</b><span class="sub">this week</span></div>`;
-    $("#board").innerHTML = board.map((r, i) => `<li class="${r.is_me ? "me" : ""}">
-        <span class="rank">${i < 3 ? ["🥇", "🥈", "🥉"][i] : i + 1}</span>
-        <span class="who"><span class="em" aria-hidden="true">${esc(r.emoji)}</span>${esc(r.display_name)}${r.is_me ? " <span class='you'>you</span>" : ""}</span>
-        <span class="hrs">${(+r.hours).toFixed(1)}h</span>
-        <span class="caption">${r.focus != null ? r.focus + "% focus" : ""}</span></li>`).join("")
-      || `<li class="empty">Nobody has finished a session this week yet. Be the first.</li>`;
-  } catch (e) { console.warn(e); $("#board").innerHTML = `<li class="empty">Couldn't load the leaderboard. Try again in a bit.</li>`; }
-}
-
-function renderLive() {
-  if (!cloud?.user) return;
-  const people = cloud.live();
-  const others = people.filter(x => x.id !== cloud.user.id);
-  $("#schoolBadge").classList.toggle("hidden", !others.length);
-  $("#liveCount").textContent = people.length ? `${people.length} live` : "";
-  const k = $("#liveKpi"); if (k) k.textContent = people.length;
-  if (currentView() !== "school") return;
-  const stateWord = {focused: "Locked in", phone: "On phone", break: "On break", chat: "Chatting", down: "Head down", sleepy: "Dozing", zoned: "Zoned out", away: "Away"};
-  $("#liveList").innerHTML = people.map(x => `<li class="${x.id === cloud.user.id ? "me" : ""}">
-      <span class="avatar s-${esc(x.state)}" aria-hidden="true">${esc(x.emoji || "🔒")}</span>
-      <span class="who"><b>${esc(x.name || "Student")}</b>${x.id === cloud.user.id ? " <span class='you'>you</span>" : ""}<span class="caption">${stateWord[x.state] || "Locked in"} · ${minsSince(x.since)}m${x.focus != null ? ` · ${x.focus}% focus` : ""}</span></span>
-    </li>`).join("") || `<li class="empty">Nobody from your school is locked in right now. Start a session and be the first.</li>`;
-}
-
-$("#signinForm").onsubmit = async e => {
-  e.preventDefault();
-  const email = $("#schoolEmail").value.trim();
-  $("#signinMsg").innerHTML = "";
-  if (!cloud) { $("#signinMsg").innerHTML = `<div class="notice err">School features couldn't load. Check your connection and refresh.</div>`; return; }
-  if (!cloud.isSchoolEmail(email)) { $("#signinMsg").innerHTML = `<div class="notice err">Use your school email. It should end in .edu (or .ac.uk, .edu.au and similar).</div>`; $("#schoolEmail").focus(); return; }
-  const btn = $("#sendCodeBtn"); btn.disabled = true; btn.textContent = "Sending…";
+    saveActive(true); saveGoals();
+    const data = await (await ensureCloud()).exportMyData();
+    download(`lockedin-my-data-${todayKey()}.json`, JSON.stringify(data, null, 2), "application/json");
+  } catch (err) { note("#acctMsg", "Couldn't export: " + err.message); }
+};
+$("#signOutBtn").onclick = async () => {
+  track("logout");
+  await cloud?.signOut();
+  announce("Signed out. Your data stays on this device.");
+};
+$("#deleteAcctBtn").onclick = async () => {
+  if (!confirm("Delete your lockedin account?\n\nThis permanently erases your synced progress, session history and any analytics tied to your account, and clears lockedin on this device. It can't be undone.")) return;
+  const btn = $("#deleteAcctBtn"); btn.disabled = true; btn.textContent = "Deleting…";
   try {
-    await cloud.sendCode(email);
-    $("#signinForm").classList.add("hidden"); $("#codeForm").classList.remove("hidden");
-    $("#codeSentTo").textContent = `We emailed ${email}. Tap the link in the email on this device, or type the code if your email has one.`;
-    $("#codeInput").focus();
-  } catch (err) { $("#signinMsg").innerHTML = `<div class="notice err">${esc(err.message)}</div>`; }
-  finally { btn.disabled = false; btn.textContent = "Send sign-in email"; }
+    await cloud.deleteAccount();
+    if (vision.on) vision.stop();
+    analytics.setAuth(null, null);       // counted anonymously, after the account is gone
+    track("account_deleted");
+    await analytics.flush();
+    location.hash = ""; location.reload();
+  } catch (err) { note("#acctMsg", err.message); btn.disabled = false; btn.textContent = "Delete account"; }
 };
-$("#codeForm").onsubmit = async e => {
-  e.preventDefault();
-  try { await cloud.verifyCode($("#schoolEmail").value, $("#codeInput").value); $("#signinMsg").innerHTML = ""; }
-  catch (err) { $("#signinMsg").innerHTML = `<div class="notice err">${esc(err.message)}</div>`; }
-};
-$("#codeBack").onclick = () => { $("#codeForm").classList.add("hidden"); $("#signinForm").classList.remove("hidden"); $("#schoolEmail").focus(); };
-$("#pSave").onclick = async () => {
-  try { await cloud.updateProfile({display_name: $("#pName").value, emoji: $("#pEmoji").value, show_live: $("#pLive").checked}); announce("Profile saved."); setSync("Saved"); schoolTimer = 0; renderSchool(true); }
-  catch (err) { setSync("Couldn't save: " + err.message); }
-};
-$("#signOutBtn").onclick = async () => { await cloud.signOut(); renderSchool(); };
 
-async function startCloud() {
-  try { cloud = await import("./cloud.js"); }
-  catch (e) { console.warn("School features unavailable", e); renderSchool(); return; }
-  let lastUser = null;
-  cloud.onChange(async () => {
-    const id = cloud.user?.id || null;
-    if (id !== lastUser) {
-      lastUser = id;
-      if (id) {
-        await cloud.joinSchool();
-        shareLive();
-        syncNow();
-        if (!VIEWS.includes(location.hash.slice(1))) location.hash = "school";
-      }
-      renderSchool(true);
-    } else renderLive();
-  });
-  await cloud.init();
-  renderSchool(true);
+// Analytics: nothing is sent until the visitor picks "Allow". The choice can be changed any time.
+function setAnalytics(on) {
+  analytics.setConsent(on ? "granted" : "denied");
+  $("#consent").classList.add("hidden");
+  renderAccount();
 }
+$("#analyticsToggle").onchange = e => setAnalytics(e.target.checked);
+$("#s_analytics").onchange = e => setAnalytics(e.target.checked);
+$("#consentYes").onclick = () => setAnalytics(true);
+$("#consentNo").onclick = () => setAnalytics(false);
+function maybeAskConsent() { if (!analytics.consent() && !$("#onboardDlg").open) $("#consent").classList.remove("hidden"); }
 
 // Diagnostics for troubleshooting detection: open the site with ?debug to expose numbers (no images).
 if (new URLSearchParams(location.search).has("debug")) window.__lockedin = {vision, live, engine, settings, get active() { return active; }};
@@ -1332,6 +1388,7 @@ function syncClips() {
 $("#clipsBtn").onclick = () => {
   if (!settings.clips && !confirm("Save short clips of your funny lock-out moments (phone grabs, dozing off, yawns) to watch when the session ends?\n\nClips stay only in this browser tab. They're deleted when you close the tab unless you share or save them.")) return;
   settings.clips = !settings.clips; saveSettings(); syncClips();
+  track("settings_change", {key: "clips"});
   toast(settings.clips ? "🎬 Clips on. Lock-outs will be caught on camera." : "Clips off");
 };
 function renderClips() {
@@ -1349,9 +1406,9 @@ $("#sumClips").onclick = async e => {
   const btn = e.target; btn.disabled = true; btn.textContent = "Making video…";
   try {
     const file = await clipper.toVideo(clipper.clips[+i]);
-    if (navigator.canShare?.({files: [file]})) { try { await navigator.share({files: [file], title: "Caught locking out on lockedin"}); btn.textContent = "Shared"; return; } catch {} }
+    if (navigator.canShare?.({files: [file]})) { try { await navigator.share({files: [file], title: "Caught locking out on lockedin"}); btn.textContent = "Shared"; track("clip_shared"); return; } catch {} }
     const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = file.name; a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 3000); btn.textContent = "Saved";
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000); btn.textContent = "Saved"; track("clip_saved");
   } catch (err) { btn.textContent = "Couldn't make video"; console.warn(err); }
   finally { btn.disabled = false; }
 };
@@ -1393,18 +1450,25 @@ async function applyWallpaper() {
   }
   document.documentElement.dataset.wallpaper = id;
 }
+const STREAK_MILESTONES = [3, 7, 14, 30, 50, 100, 200, 365];
 function renderWallet() {
   $("#keysNum").textContent = rewards.wallet.keys;
   const s = streakInfo();
   $("#streakTop").textContent = s.count;
   $("#streakBtn").classList.toggle("cold", !s.count);
   $("#streakBtn").classList.toggle("risk", !!s.atRisk);
+  // Milestones are reported once each (remembered on this device only).
+  try {
+    if (STREAK_MILESTONES.includes(s.count) && +localStorage.getItem("lockedin.milestone") !== s.count) {
+      localStorage.setItem("lockedin.milestone", s.count); track("streak_milestone", {days: s.count});
+    }
+  } catch {}
   $("#streakBtn").title = s.atRisk ? `⌛ Lock in ${fmtHM(rewards.STREAK_MIN - s.todaySec)} more today to keep your ${s.count}-day streak` : `${s.count}-day streak. Lock in 25 minutes a day to keep it.`;
 }
 rewards.onChange(ev => {
   if (ev.type === "earn") toast(`+${ev.amount} 🔑 ${ev.why}`);
-  if (ev.type === "freeze") toast("🧊 Streak freeze used. Your streak is safe.");
-  if (ev.type === "equip") applyWallpaper();
+  if (ev.type === "freeze") { toast("🧊 Streak freeze used. Your streak is safe."); track("streak_freeze_used"); }
+  if (ev.type === "equip" || ev.type === "sync") applyWallpaper();
   renderWallet();
   if ($("#shopDlg").open) renderShop();
 });
@@ -1438,9 +1502,10 @@ $("#keysBtn").onclick = async () => { await loadCustom(); renderShop(); $("#shop
 $("#streakBtn").onclick = () => { const s = streakInfo(); toast(s.atRisk ? `⌛ ${fmtHM(rewards.STREAK_MIN - s.todaySec)} left today to keep your streak` : `🔥 ${s.count}-day streak`); };
 $("#shopWalls").onclick = e => {
   const buy = e.target.closest("[data-buy-wp]")?.dataset.buyWp, use = e.target.closest("[data-equip]")?.dataset.equip;
-  if (buy === "custom") { if (rewards.buyWallpaper("custom")) { toast("Unlocked! Now pick a photo ✨"); renderShop(); $("#wallUpload").click(); } return; }
-  if (buy) { if (rewards.buyWallpaper(buy)) { rewards.equip(buy); toast("New background unlocked ✨"); } }
-  if (use) rewards.equip(use);
+  const price = rewards.WALLPAPERS.find(w => w.id === buy)?.price;
+  if (buy === "custom") { if (rewards.buyWallpaper("custom")) { track("shop_purchase", {item: "custom", price}); toast("Unlocked! Now pick a photo ✨"); renderShop(); $("#wallUpload").click(); } return; }
+  if (buy) { if (rewards.buyWallpaper(buy)) { rewards.equip(buy); toast("New background unlocked ✨"); track("shop_purchase", {item: buy, price}); track("wallpaper_equip", {id: buy}); } }
+  if (use) { rewards.equip(use); track("wallpaper_equip", {id: use}); }
   if (e.target.closest("[data-upload]")) $("#wallUpload").click();
   renderShop();
 };
@@ -1456,12 +1521,13 @@ $("#wallUpload").onchange = async e => {
     if (customUrl) URL.revokeObjectURL(customUrl);
     customUrl = URL.createObjectURL(blob);
     rewards.equip("custom");
+    track("wallpaper_equip", {id: "custom"});
     await applyWallpaper();
     toast("Your background is set ✨");
   } catch (err) { console.warn(err); toast("Couldn't use that image. Try a JPG or PNG.", "spend"); }
   renderShop();
 };
-$("#buyFreeze").onclick = () => { if (rewards.buyFreeze()) toast("🧊 Streak freeze ready"); renderShop(); };
+$("#buyFreeze").onclick = () => { if (rewards.buyFreeze()) { toast("🧊 Streak freeze ready"); track("shop_purchase", {item: "streak_freeze", price: rewards.FREEZE_PRICE}); } renderShop(); };
 
 // "Your week, wrapped": Instagram-story style recap.
 let story = {cards: [], i: 0, timer: 0, week: null};
@@ -1480,6 +1546,7 @@ function openWrapped(offset = wkOffset) {
   story.week = wrappedStats(offset);
   story.cards = rewards.wrapCards(story.week);
   story.i = 0;
+  track("wrapped_open", {week_offset: offset});
   $("#storyBars").innerHTML = story.cards.map(() => `<i><b></b></i>`).join("");
   $("#wrappedDlg").showModal();
   showCard();
@@ -1502,15 +1569,20 @@ $("#wrappedDlg").addEventListener("keydown", e => { if (e.key === "ArrowRight") 
 async function shareWeek() {
   const blob = await rewards.shareImage(story.week);
   const file = new File([blob], "my-lockedin-week.png", {type: "image/png"});
-  if (navigator.canShare?.({files: [file]})) { try { await navigator.share({files: [file], title: "My week on lockedin"}); return; } catch {} }
+  if (navigator.canShare?.({files: [file]})) { try { await navigator.share({files: [file], title: "My week on lockedin"}); track("wrapped_share", {method: "share"}); return; } catch {} }
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   toast("Saved your story image");
+  track("wrapped_share", {method: "download"});
 }
 $("#wrappedBtn").onclick = () => openWrapped();
 
 /* ================= init ================= */
 (async function init() {
+  // Search Console token from config.js (the commented tag in index.html is the reliable route; see DEPLOY.md).
+  if (GSC_VERIFICATION && !document.querySelector('meta[name="google-site-verification"]')) {
+    const m = document.createElement("meta"); m.name = "google-site-verification"; m.content = GSC_VERIFICATION; document.head.append(m);
+  }
   applyTheme();
   applyWallpaper();
   rewards.applyFreezes(secondsByDay());
@@ -1519,6 +1591,9 @@ $("#wrappedBtn").onclick = () => openWrapped();
   showView(currentView());
   render();
   if (!store.load("onboarded", false)) openOnboarding();
+  else maybeAskConsent();
+  renderAccount();
+  track("app_open", {view: currentView(), returning: sessions.length > 0, onboarded: !!store.load("onboarded", false), had_account: hadAccount()});
   const seen = store.load("reportSeen", null), dow = new Date().getDay();
   if (sessions.length && seen !== dayKey(weekStartOf(new Date())) && (dow === settings.weekStart || dow === (settings.weekStart + 6) % 7)) $("#insightsBadge").classList.remove("hidden");
 
@@ -1537,7 +1612,7 @@ $("#wrappedBtn").onclick = () => openWrapped();
     document.body.classList.add("no-goals");
   }
   emoji.start();
-  if (SCHOOL_ENABLED) startCloud();
-  else { document.querySelector('.tabs a[data-view="school"]')?.remove(); $("#v-school")?.remove(); }
+  // Only load the accounts library for people who have signed in before (or are coming back from Google).
+  if (hadAccount() || new URLSearchParams(location.search).has("code")) startCloud();
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
 })();
